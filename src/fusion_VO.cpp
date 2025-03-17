@@ -26,12 +26,53 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
 
 void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
 {
-  return;
+  try
+  {
+    init_image_ptr_ = cv_bridge::toCvCopy(*msg, "rgb8");
+    if(!init_image_ptr_)
+      return;
+    init_image_ = init_image_ptr_->image;
+  }
+  catch(cv_bridge::Exception &e)
+  {
+    RCLCPP_ERROR(get_logger(), "cv_bride error: %s", e.what());
+  }
 }
 
-void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg) { return; }
+void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
+{
+  init_imu_ = msg;
+}
 
-void FusionVO::timerCallback() { return; }
+void FusionVO::timerCallback()
+{
+  if(init_image_.empty() && !init_imu_)
+    RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
+}
+
+void FusionVO::initializeEngine(const std::string &engine_path)
+{
+  // Load TensorRT engine from file
+  std::ifstream file(engine_path, std::ios::binary);
+  if(!file)
+  {
+    throw std::runtime_error("Failed to open engine file: " + engine_path);
+  }
+  file.seekg(0, std::ios::end);
+  size_t size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  std::vector<char> engine_data(size);
+  file.read(engine_data.data(), size);
+
+  // Create runtime and deserialize engine
+  // Create TensorRT Runtime
+  runtime.reset(nvinfer1::createInferRuntime(gLogger));
+
+  // Deserialize engine
+  engine.reset(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
+  context.reset(engine->createExecutionContext());
+}
 
 int main(int argc, char *argv[])
 {
