@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fusion_vo</name>
+  <version>0.1.0</version>
+  <description>combining VO and IMU measurements via EKF</description>
+  <maintainer email="rohankhaire.work@gmail.com">Rohan Khaire</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
