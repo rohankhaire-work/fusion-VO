@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.15)
 project(fusion_vo CUDA CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -diag-suppress=20012")
+set(CMAKE_CUDA_ARCHITECTURES 86)
+
 find_package(TensorRT REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -10,7 +13,9 @@ find_package(image_transport REQUIRED)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 
-add_executable(fusion_vo src/fusion_VO.cpp)
+add_executable(fusion_vo src/fusion_VO.cpp
+                         src/visual_odometry.cpp
+                         src/VO_inference.cu)
 target_include_directories(fusion_vo PRIVATE include ${CUDAToolkit_INCLUDE_DIR} ${TensorRT_INCLUDE_DIRS})
 ament_target_dependencies(fusion_vo rclcpp sensor_msgs cv_bridge image_transport)
 

@@ -6,6 +6,7 @@
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.hpp>
+#include <optional>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
@@ -52,12 +53,17 @@ private:
   std::string img_topic_;
   std::string imu_topic_;
   std::string weight_file_;
-  int resize_w_, resize_h_;
+  int resize_w_, resize_h_, num_keypoints_;
+  double score_thresh_;
+  double fx_, fy_, cx_, cy_;
 
   // Varaibles
+  cv::Mat prev_frame_;
+  cv::Mat curr_frame_;
   cv::Mat init_image_;
   cv_bridge::CvImagePtr init_image_ptr_;
   sensor_msgs::msg::Imu::ConstSharedPtr init_imu_;
+  std::optional<VisualOdometry> visual_odometry_;
 
   // Functions
   void initializeEngine(const std::string &);

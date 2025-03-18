@@ -7,6 +7,16 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   weight_file_ = declare_parameter<std::string>("weight_file", "");
   resize_w_ = declare_parameter("resize_width", 416);
   resize_h_ = declare_parameter("resize_height", 416);
+  num_keypoints_ = declare_parameter("num_keypoints", 1024);
+  score_thresh_ = declare_parameter("score_threshold", 0.5);
+  fx_ = declare_parameter("fx", 0.0);
+  fy_ = declare_parameter("fy", 0.0);
+  cx_ = declare_parameter("cx", 0.0);
+  cy_ = declare_parameter("cy", 0.0);
+
+  // Set VisualOdometry Class
+  visual_odometry_ = VisualOdometry(resize_w_, resize_h_, num_keypoints_, score_thresh_);
+  visual_odometry_->setIntrinsicMat(fx_, fy_, cx_, cy_);
 
   if(img_topic_.empty() || weight_file_.empty())
   {
@@ -22,6 +32,9 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
     imu_topic_, 1, std::bind(&FusionVO::IMUCallback, this, std::placeholders::_1));
   timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&FusionVO::timerCallback, this));
+
+  // Initialize TensorRT
+  initializeEngine(weight_file_);
 }
 
 void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
@@ -48,6 +61,13 @@ void FusionVO::timerCallback()
 {
   if(init_image_.empty() && !init_imu_)
     RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
+
+  // Get VO results
+  curr_frame_ = init_image_;
+  if(!curr_frame_.empty() || !prev_frame_.empty())
+    auto pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
+
+  prev_frame_ = curr_frame_;
 }
 
 void FusionVO::initializeEngine(const std::string &engine_path)

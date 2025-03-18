@@ -2,6 +2,11 @@
   ros__parameters:
     image_topic: "carla/hero/front/image"
     imu_topic: "carla/hero/imu"
-    weight_file: "home/fusion-VO-ws/src/fusion-VO/weights/superpoint_lightglue_320w_240h.engine"
+    weight_file: "home/fusion-VO-ws/src/fusion-VO/weights/superpoint_lightglue_320_240.engine"
     resize_width: 320
     resize_height: 240
+    num_keypoints: 1024 #According to the NN model
+    fx: 320.0
+    fy: 320.0
+    cx: 320.0
+    cy: 240.0
