@@ -9,7 +9,8 @@ VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
   score_threshold_ = score_thresh;
 
   // allocate memory for inputs and outputs
-  allocateBuffers();
+  allocateHostBuffers();
+  allocateDeviceBuffers();
 }
 
 void VisualOdometry::setIntrinsicMat(double fx, double fy, double cx, double cy)
@@ -149,25 +150,11 @@ VisualOdometry::estimatePose(const std::vector<int64_t> &filtered_matches)
 }
 
 // Allocate memory initially
-void VisualOdometry::allocateBuffers()
+void VisualOdometry::allocateHostBuffers()
 {
   // Allocate input tensor
   h_input_.resize(2 * resize_h_ * resize_w_);
-  d_input_.resize(2 * resize_h_ * resize_w_);
-
-  // Allocate output tensors
-  d_keypoints_.resize(2 * max_matches_ * 2);
-  d_matches_.resize(3 * max_matches_);
-  d_scores_.resize(max_matches_);
-
-  // Allocate host tensors
   h_keypoints_.resize(2 * max_matches_ * 2);
   h_matches_.resize(3 * max_matches_);
   h_scores_.resize(max_matches_);
-
-  // Set bindings
-  bindings[0] = thrust::raw_pointer_cast(d_input_.data());
-  bindings[1] = thrust::raw_pointer_cast(d_keypoints_.data());
-  bindings[2] = thrust::raw_pointer_cast(d_matches_.data());
-  bindings[3] = thrust::raw_pointer_cast(d_scores_.data());
 }

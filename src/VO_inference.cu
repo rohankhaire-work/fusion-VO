@@ -16,7 +16,7 @@ bool VisualOdometry::runInferenceTensorrt(nvinfer1::IExecutionContext *context,
   bool status = context->enqueueV3(stream);
   if(!status)
   {
-    std::cerr << "TensorRT inference failed!" << std::endl;
+    printf("TensorRT inference failed!\n");
     return false;
   }
 
@@ -29,4 +29,19 @@ bool VisualOdometry::runInferenceTensorrt(nvinfer1::IExecutionContext *context,
   thrust::copy(d_scores_.begin(), d_scores_.end(), h_scores_.begin());
 
   return true;
+}
+
+void VisualOdometry::allocateDeviceBuffers()
+{
+  // Allocate device tensors
+  d_input_.resize(2 * resize_h_ * resize_w_);
+  d_keypoints_.resize(2 * max_matches_ * 2);
+  d_matches_.resize(3 * max_matches_);
+  d_scores_.resize(max_matches_);
+
+  // Set bindings
+  bindings[0] = thrust::raw_pointer_cast(d_input_.data());
+  bindings[1] = thrust::raw_pointer_cast(d_keypoints_.data());
+  bindings[2] = thrust::raw_pointer_cast(d_matches_.data());
+  bindings[3] = thrust::raw_pointer_cast(d_scores_.data());
 }

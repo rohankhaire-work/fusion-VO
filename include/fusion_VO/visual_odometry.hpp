@@ -42,7 +42,8 @@ private:
 
   // Functions
   cv::Mat preprocess_image(const cv::Mat &, int, int);
-  void allocateBuffers();
+  void allocateHostBuffers();
+  void allocateDeviceBuffers();
   bool runInferenceTensorrt(nvinfer1::IExecutionContext *, cudaStream_t);
   void postprocessModelOutput(nvinfer1::IExecutionContext *, std::vector<int64_t> &,
                               std::vector<float> &);

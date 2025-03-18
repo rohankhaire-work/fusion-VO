@@ -1,4 +1,5 @@
 #include "fusion_VO/fusion_VO.hpp"
+#include "fusion_VO/imu_measurement.hpp"
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -50,23 +51,45 @@ void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
   {
     RCLCPP_ERROR(get_logger(), "cv_bride error: %s", e.what());
   }
+
+  // IMU Preintegration code
+  if(!last_image_time_.seconds())
+  {
+    // First image, just update timestamp
+    last_image_time_ = msg->header.stamp;
+    return;
+  }
+  // Current time
+  rclcpp::Time current_time = msg->header.stamp;
+
+  // Work on copy of buffer
+  auto imu_buffer_copy = imu_buffer_;
+  required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy, last_image_time_,
+                                                        current_time);
+
+  last_image_time_ = current_time;
 }
 
 void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 {
-  init_imu_ = msg;
+  imu_buffer_.emplace_back(*msg);
 }
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() && !init_imu_)
+  if(init_image_.empty() && required_imu_.empty())
+  {
     RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
+    return;
+  }
 
   // Get VO results
   curr_frame_ = init_image_;
   if(!curr_frame_.empty() || !prev_frame_.empty())
-    auto pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
+    auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
+  // Get IMU Preintegration
+  auto imu_pose = imu_measurement::imu_preintegration_RK4(required_imu_);
   prev_frame_ = curr_frame_;
 }
 

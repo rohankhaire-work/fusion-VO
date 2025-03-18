@@ -2,6 +2,7 @@
 #define FUSION_VO__FUSION_VO_HPP_
 
 #include "fusion_VO/visual_odometry.hpp"
+#include "fusion_VO/imu_measurement.hpp"
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
@@ -14,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <fstream>
+#include <deque>
 
 // Custom TensorRT Logger
 class Logger : public nvinfer1::ILogger
@@ -62,8 +64,10 @@ private:
   cv::Mat curr_frame_;
   cv::Mat init_image_;
   cv_bridge::CvImagePtr init_image_ptr_;
-  sensor_msgs::msg::Imu::ConstSharedPtr init_imu_;
   std::optional<VisualOdometry> visual_odometry_;
+  std::deque<sensor_msgs::msg::Imu> imu_buffer_;
+  std::vector<sensor_msgs::msg::Imu> required_imu_;
+  rclcpp::Time last_image_time_;
 
   // Functions
   void initializeEngine(const std::string &);
