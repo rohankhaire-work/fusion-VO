@@ -3,12 +3,14 @@
 
 #include "fusion_VO/visual_odometry.hpp"
 #include "fusion_VO/imu_measurement.hpp"
+#include "fusion_VO/gps_measurement.hpp"
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.hpp>
 #include <optional>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/detail/nav_sat_fix__struct.hpp>
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
 
@@ -39,11 +41,13 @@ private:
   // Subscribers
   image_transport::Subscriber img_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // Callbacks
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &);
   void IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &);
+  void GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &);
   void timerCallback();
 
   // Tensorrt
@@ -54,6 +58,7 @@ private:
   // Parameters
   std::string img_topic_;
   std::string imu_topic_;
+  std::string gps_topic_;
   std::string weight_file_;
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
@@ -68,6 +73,8 @@ private:
   std::deque<sensor_msgs::msg::Imu> imu_buffer_;
   std::vector<sensor_msgs::msg::Imu> required_imu_;
   rclcpp::Time last_image_time_;
+  geometry_msgs::msg::Point gps_position_;
+  bool init_pose_available_ = false;
 
   // Functions
   void initializeEngine(const std::string &);

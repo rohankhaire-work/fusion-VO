@@ -1,10 +1,13 @@
 #include "fusion_VO/fusion_VO.hpp"
+#include "fusion_VO/gps_measurement.hpp"
 #include "fusion_VO/imu_measurement.hpp"
+#include <sensor_msgs/msg/detail/nav_sat_fix__struct.hpp>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
   img_topic_ = declare_parameter<std::string>("image_topic", "");
   imu_topic_ = declare_parameter<std::string>("imu_topic", "");
+  gps_topic_ = declare_parameter<std::string>("gps_topic", "");
   weight_file_ = declare_parameter<std::string>("weight_file", "");
   resize_w_ = declare_parameter("resize_width", 416);
   resize_h_ = declare_parameter("resize_height", 416);
@@ -31,6 +34,8 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
     "raw");
   imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
     imu_topic_, 1, std::bind(&FusionVO::IMUCallback, this, std::placeholders::_1));
+  gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
+    gps_topic_, 1, std::bind(&FusionVO::GPSCallback, this, std::placeholders::_1));
   timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&FusionVO::timerCallback, this));
 
@@ -70,6 +75,15 @@ void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
   last_image_time_ = current_time;
 }
 
+void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &msg)
+{
+  // Calcualte absoulte position in CARLA from GPS
+  gps_position_ = gps_measurement::compute_absolute_position(msg);
+
+  // Set pose available to true
+  init_pose_available_ = true;
+}
+
 void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 {
   imu_buffer_.emplace_back(*msg);
@@ -77,7 +91,7 @@ void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() && required_imu_.empty())
+  if(init_image_.empty() && required_imu_.empty() && !init_pose_available_)
   {
     RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
     return;
