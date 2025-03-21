@@ -4,6 +4,7 @@
 #include "fusion_VO/visual_odometry.hpp"
 #include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/gps_measurement.hpp"
+#include "fusion_VO/kalman_filter.hpp"
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
@@ -13,11 +14,13 @@
 #include <sensor_msgs/msg/detail/nav_sat_fix__struct.hpp>
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <memory>
 #include <string>
 #include <fstream>
 #include <deque>
+#include <future>
 
 // Custom TensorRT Logger
 class Logger : public nvinfer1::ILogger
@@ -43,6 +46,10 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  // Publishers
+  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
 
   // Callbacks
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &);
@@ -77,10 +84,15 @@ private:
   Eigen::Vector3d gps_position_;
   bool init_pose_available_ = false;
   bool new_gps_, new_vo_ = false;
-  Eigen::Matrix<double, 10, 10> P_mat_, Q_mat_;
+  Eigen::Matrix<double, 9, 9> P_mat_, Q_mat_;
+  Eigen::Matrix<double, 6, 6> R_vo_;
 
   // Functions
   void initializeEngine(const std::string &);
+  void publishFrameAndOdometry(const rclcpp::Publisher &, const IMUState &);
+  void setP(bool);
+  void setQ();
+  void setR_vo();
 };
 
 #endif // FUSION_VO__FUSION_VO_HPP_

@@ -1,7 +1,4 @@
 #include "fusion_VO/fusion_VO.hpp"
-#include "fusion_VO/gps_measurement.hpp"
-#include "fusion_VO/imu_measurement.hpp"
-#include <sensor_msgs/msg/detail/nav_sat_fix__struct.hpp>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -36,6 +33,12 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
     imu_topic_, 1, std::bind(&FusionVO::IMUCallback, this, std::placeholders::_1));
 
+  // publisher
+  odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("fusion_vo/odom", 10);
+
+  // TF Broadcaster
+  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
   // USe absolute absolute coords
   // used when there is a map frame
   if(use_absolute_coords_)
@@ -49,7 +52,11 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   initializeEngine(weight_file_);
 
   // Initialize the state of our system
+  // and covariance matrices
   init_state_ = IMUState();
+  setP(use_absolute_coords_);
+  setQ();
+  setR_vo();
 }
 
 void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
@@ -76,7 +83,7 @@ void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &ms
   gps_position_ = gps_measurement::compute_absolute_position(msg);
 
   // Set pose available to true
-  if(!init_gps_available_)
+  if(!init_gps_available_ && absolute_coords)
   {
     init_state_.position.x() = gps_position_.x();
     init_state_.position.y() = gps_position_.y();
@@ -110,25 +117,27 @@ void FusionVO::timerCallback()
 
   if(!curr_frame_.empty() && !prev_frame_.empty() && !new_vo_)
   {
+    double dt = (curr_time_ - last_image_time_).seconds();
     // Work on copy of buffer
     auto imu_buffer_copy = imu_buffer_;
     required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
                                                           last_image_time_, curr_time_);
-    // Get IMU Preintegration
+    // Get IMU Preintegration using RK4
     auto imu_pose = imu_measurement::imu_preintegration_RK4(required_imu_);
+    auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
     // Kalman predict
-    kalman_filter::predict(init_state_, imu_pose, Q_mat_);
+    kalman_filter::predict_rk4(init_state_, imu_pose, Q_mat_, P_mat_, dt);
 
     // Kalman update
+    kalman_filter::update_vo(init_state_, vo_pose.first, vo_pose.second, R_vo_, P_mat_);
+
     if(new_gps_)
       kalman_filter::update_gps(init_state_, gps_position_, R_mat_gps_);
-    if(new_vo_)
-    {
-      auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
-      kalman_filter::update_vo(init_state_, vo_pose, R_mat_vo_);
-    }
   }
+
+  // Publish TF Frame and odometry msg
+  publishFrameAndOdometry(init_state_);
 
   last_image_time_ = curr_time_;
   prev_frame_ = curr_frame_;
@@ -158,6 +167,104 @@ void FusionVO::initializeEngine(const std::string &engine_path)
   // Deserialize engine
   engine.reset(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
   context.reset(engine->createExecutionContext());
+}
+
+void FusionVO::setP(bool absolute_coords)
+{
+  if(absolute_coords)
+  {
+    // Set position uncertainty (GPS accuracy ~3m)
+    double sigma_p = 3.0; // meters
+    P_mat_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * (sigma_p * sigma_p);
+
+    // Set velocity uncertainty
+    double sigma_v = 0.1; // m/s
+    P_mat_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_v * sigma_v);
+
+    // Set orientation uncertainty (IMU heading error ~5 degrees)
+    double sigma_R = 0.087; // radians
+    P_mat_.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * (sigma_R * sigma_R);
+  }
+  else
+  {
+    // Set position uncertainty
+    double sigma_p = 3.0; // meters
+    P_mat_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * (sigma_p * sigma_p);
+
+    // Set velocity uncertainty
+    double sigma_v = 0.1; // m/s
+    P_mat_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_v * sigma_v);
+
+    // Set orientation uncertainty (IMU heading error ~5 degrees)
+    double sigma_R = 0.087; // radians
+    P_mat_.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * (sigma_R * sigma_R);
+  }
+}
+
+void FusionVO::setQ()
+{
+  // IMU noise parameters
+  double sigma_a = 0.1;      // Accelerometer noise (m/s²)
+  double sigma_omega = 0.01; // Gyroscope noise (rad/s)
+
+  // Process noise covariance (velocity affected by acceleration noise)
+  Q_mat_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_a * sigma_a);
+
+  // Process noise covariance (orientation affected by gyroscope noise)
+  Q_mat_.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * (sigma_omega * sigma_omega);
+}
+
+void FusionVO::setR_vo()
+{
+  // VO noise parameters (adjust based on your VO accuracy)
+  double sigma_p = 0.1;       // Translation noise (meters)
+  double sigma_theta = 0.015; // Rotation noise (radians)
+
+  // Set translation noise
+  R_vo_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * (sigma_p * sigma_p);
+
+  // Set rotation noise
+  R_vo_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_theta * sigma_theta);
+}
+
+void FusionVO::publishFrameAndOdometry(const rclcpp::Publisher &odom_pub,
+                                       const IMUState &state)
+{
+  // --- Publish TF Transform ---
+  geometry_msgs::msg::TransformStamped transform_msg;
+  transform_msg.header.stamp = rclcpp::Clock(RCL_TIME_NOW).now();
+  transform_msg.header.frame_id = "odom";
+
+  transform_msg.transform.translation.x = position.x();
+  transform_msg.transform.translation.y = position.y();
+  transform_msg.transform.translation.z = position.z();
+
+  transform_msg.transform.rotation.x = quaternion.x();
+  transform_msg.transform.rotation.y = quaternion.y();
+  transform_msg.transform.rotation.z = quaternion.z();
+  transform_msg.transform.rotation.w = quaternion.w();
+
+  tf_broadcaster_->sendTransform(transform_msg);
+
+  // --- Publish Odometry Message ---
+  nav_msgs::msg::Odometry odom_msg;
+  odom_msg.header.stamp = rclcpp::Clock(RCL_TIME_NOW).now();
+  odom_msg.header.frame_id = "hero";
+
+  odom_msg.pose.pose.position.x = state.position.x();
+  odom_msg.pose.pose.position.y = state.position.y();
+  odom_msg.pose.pose.position.z = state.position.z();
+
+  odom_msg.pose.pose.orientation.x = state.orientation.x();
+  odom_msg.pose.pose.orientation.y = state.orientation.y();
+  odom_msg.pose.pose.orientation.z = state.orientation.z();
+  odom_msg.pose.pose.orientation.w = state.orientation.w();
+
+  odom_msg.twist.twist.linear.x = state.velocity.x();
+  odom_msg.twist.twist.linear.y = state.velocity.y();
+  odom_msg.twist.twist.linear.z = state.velocity.z();
+
+  odom_pub_.publish(odom_msg);
 }
 
 int main(int argc, char *argv[])

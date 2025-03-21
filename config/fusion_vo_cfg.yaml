@@ -10,3 +10,4 @@
     fy: 320.0
     cx: 320.0
     cy: 240.0
+    absolute_coords: false
