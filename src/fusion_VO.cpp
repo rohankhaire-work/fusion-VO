@@ -17,6 +17,7 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   fy_ = declare_parameter("fy", 0.0);
   cx_ = declare_parameter("cx", 0.0);
   cy_ = declare_parameter("cy", 0.0);
+  use_absolute_coords_ = declare_parameter("absolute_coords", false);
 
   // Set VisualOdometry Class
   visual_odometry_ = VisualOdometry(resize_w_, resize_h_, num_keypoints_, score_thresh_);
@@ -34,13 +35,21 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
     "raw");
   imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
     imu_topic_, 1, std::bind(&FusionVO::IMUCallback, this, std::placeholders::_1));
-  gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
-    gps_topic_, 1, std::bind(&FusionVO::GPSCallback, this, std::placeholders::_1));
+
+  // USe absolute absolute coords
+  // used when there is a map frame
+  if(use_absolute_coords_)
+    gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
+      gps_topic_, 1, std::bind(&FusionVO::GPSCallback, this, std::placeholders::_1));
+
   timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&FusionVO::timerCallback, this));
 
   // Initialize TensorRT
   initializeEngine(weight_file_);
+
+  // Initialize the state of our system
+  init_state_ = IMUState();
 }
 
 void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
@@ -57,22 +66,8 @@ void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
     RCLCPP_ERROR(get_logger(), "cv_bride error: %s", e.what());
   }
 
-  // IMU Preintegration code
-  if(!last_image_time_.seconds())
-  {
-    // First image, just update timestamp
-    last_image_time_ = msg->header.stamp;
-    return;
-  }
-  // Current time
-  rclcpp::Time current_time = msg->header.stamp;
-
-  // Work on copy of buffer
-  auto imu_buffer_copy = imu_buffer_;
-  required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy, last_image_time_,
-                                                        current_time);
-
-  last_image_time_ = current_time;
+  curr_time_ = msg->header.stamp();
+  new_vo_ = true;
 }
 
 void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &msg)
@@ -81,30 +76,64 @@ void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &ms
   gps_position_ = gps_measurement::compute_absolute_position(msg);
 
   // Set pose available to true
-  init_pose_available_ = true;
+  if(!init_gps_available_)
+  {
+    init_state_.position.x() = gps_position_.x();
+    init_state_.position.y() = gps_position_.y();
+    init_state_.position.z() = gps_position_.z();
+  }
+  init_gps_available_ = true;
+  new_gps_ = true;
 }
 
 void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 {
   imu_buffer_.emplace_back(*msg);
+
+  // Trim the buffer every new VO update
+  if(new_vo_ && last_image_time_.second())
+  {
+    imu_measurement::trim_imu_buffer(imu_buffer, last_image_time_);
+  }
 }
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() && required_imu_.empty() && !init_pose_available_)
+  if(init_image_.empty() && required_imu_.empty())
   {
     RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
     return;
   }
 
-  // Get VO results
+  // Assign curr frame
   curr_frame_ = init_image_;
-  if(!curr_frame_.empty() || !prev_frame_.empty())
-    auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
-  // Get IMU Preintegration
-  auto imu_pose = imu_measurement::imu_preintegration_RK4(required_imu_);
+  if(!curr_frame_.empty() && !prev_frame_.empty() && !new_vo_)
+  {
+    // Work on copy of buffer
+    auto imu_buffer_copy = imu_buffer_;
+    required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
+                                                          last_image_time_, curr_time_);
+    // Get IMU Preintegration
+    auto imu_pose = imu_measurement::imu_preintegration_RK4(required_imu_);
+
+    // Kalman predict
+    kalman_filter::predict(init_state_, imu_pose, Q_mat_);
+
+    // Kalman update
+    if(new_gps_)
+      kalman_filter::update_gps(init_state_, gps_position_, R_mat_gps_);
+    if(new_vo_)
+    {
+      auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
+      kalman_filter::update_vo(init_state_, vo_pose, R_mat_vo_);
+    }
+  }
+
+  last_image_time_ = curr_time_;
   prev_frame_ = curr_frame_;
+  new_vo_ = false;
+  new_gps_ = false;
 }
 
 void FusionVO::initializeEngine(const std::string &engine_path)

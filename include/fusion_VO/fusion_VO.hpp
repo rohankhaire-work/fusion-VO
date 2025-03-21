@@ -63,8 +63,9 @@ private:
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
   double fx_, fy_, cx_, cy_;
+  bool use_absolute_coords_;
 
-  // Varaibles
+  // Variables
   cv::Mat prev_frame_;
   cv::Mat curr_frame_;
   cv::Mat init_image_;
@@ -72,9 +73,11 @@ private:
   std::optional<VisualOdometry> visual_odometry_;
   std::deque<sensor_msgs::msg::Imu> imu_buffer_;
   std::vector<sensor_msgs::msg::Imu> required_imu_;
-  rclcpp::Time last_image_time_;
-  geometry_msgs::msg::Point gps_position_;
+  rclcpp::Time last_image_time_, curr_time_;
+  Eigen::Vector3d gps_position_;
   bool init_pose_available_ = false;
+  bool new_gps_, new_vo_ = false;
+  Eigen::Matrix<double, 10, 10> P_mat_, Q_mat_;
 
   // Functions
   void initializeEngine(const std::string &);

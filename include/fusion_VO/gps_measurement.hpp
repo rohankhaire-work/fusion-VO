@@ -2,13 +2,12 @@
 #define GPS_MEASUREMENT__GPS_MEASUREMENT_HPP_
 
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
-#include <geometry_msgs/msg/point.hpp>
-
+#include <Eigen/Dense>
 #include <cmath>
 
 namespace gps_measurement
 {
-  geometry_msgs::msg::Point
+  Eigen::Vector3d
   compute_absolute_position(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &);
 }
 

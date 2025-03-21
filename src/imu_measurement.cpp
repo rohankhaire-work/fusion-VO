@@ -8,7 +8,6 @@ namespace imu_measurement
   {
     std::vector<sensor_msgs::msg::Imu> selected_imu_data;
     auto it = imu_buffer.begin();
-    auto it_end = imu_buffer.begin();
     while(it != imu_buffer.end())
     {
       rclcpp::Time imu_time(it->header.stamp);
@@ -17,13 +16,26 @@ namespace imu_measurement
       {
         selected_imu_data.push_back(*it);
         it++;
-        it_end = it;
       }
     }
 
-    // Erase the irrelevant and processed data
-    imu_buffer.erase(imu_buffer.begin(), it_end);
     return selected_imu_data;
+  }
+
+  void trim_imu_buffer(std::deque<sensor_msgs::msg::Imu> &imu_buffer,
+                       const rclcpp::Time &curr_time)
+  {
+    auto it = imu_buffer.begin();
+    while(it != imu_buffer.end())
+    {
+      rclcpp::Time imu_time(it->header.stamp);
+
+      if(imu_time < curr_time)
+      {
+        imu_buffer.erase(it);
+        it++;
+      }
+    }
   }
 
   // Quaternion derivative given angular velocity
@@ -86,8 +98,7 @@ namespace imu_measurement
     return new_state;
   }
 
-  Eigen::Matrix4d
-  imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs)
+  IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs)
   {
     if(imu_msgs.size() < 2)
       return Eigen::Matrix4d::Identity();
@@ -114,12 +125,7 @@ namespace imu_measurement
       imu_state = rk4_imu_integration(imu_state, accel, gyro, dt);
     }
 
-    // Convert final state to transformation matrix
-    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block<3, 3>(0, 0) = imu_state.orientation.toRotationMatrix();
-    T.block<3, 1>(0, 3) = imu_state.position;
-
-    return T;
+    return imu_state;
   }
 
 }

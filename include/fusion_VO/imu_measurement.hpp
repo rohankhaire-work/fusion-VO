@@ -26,13 +26,15 @@ namespace imu_measurement
   collect_imu_readings(const std::deque<sensor_msgs::msg::Imu> &, const rclcpp::Time &,
                        const rclcpp::Time &);
 
+  void trim_imu_buffer(const std::deque<sensor_msgs::msg::Imu> &, const rclcpp::Time &);
+
   Eigen::Quaterniond
   quaternion_derivative(const Eigen::Quaterniond &, const Eigen::Vector3d &);
 
   IMUState rk4_imu_integration(const IMUState &, const Eigen::Vector3d &,
                                const Eigen::Vector3d &, double);
 
-  Eigen::Matrix4d imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &);
+  IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &);
 }
 
 #endif // IMU_MEASUREMENT__IMU_MEASUREMENT_HPP_
