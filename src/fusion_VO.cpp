@@ -59,6 +59,12 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   setR_vo();
 }
 
+FusionVO::~FusionVO()
+{
+  timer_.destroy();
+  visual_odometry_.reset();
+}
+
 void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
 {
   try
@@ -123,7 +129,8 @@ void FusionVO::timerCallback()
     required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
                                                           last_image_time_, curr_time_);
     // Get IMU Preintegration using RK4
-    auto imu_pose = imu_measurement::imu_preintegration_RK4(required_imu_);
+    // Use this for Pose Graph Optimization
+    auto imu_pose = imu_measurement::imu_integration_RK4(required_imu_);
     auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
     // Kalman predict

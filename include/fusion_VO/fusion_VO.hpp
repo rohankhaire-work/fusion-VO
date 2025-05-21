@@ -39,6 +39,7 @@ class FusionVO : public rclcpp::Node
 {
 public:
   FusionVO();
+  ~FusionVO();
 
 private:
   // Subscribers
@@ -77,7 +78,7 @@ private:
   cv::Mat curr_frame_;
   cv::Mat init_image_;
   cv_bridge::CvImagePtr init_image_ptr_;
-  std::optional<VisualOdometry> visual_odometry_;
+  std::unique_ptr<VisualOdometry> visual_odometry_;
   std::deque<sensor_msgs::msg::Imu> imu_buffer_;
   std::vector<sensor_msgs::msg::Imu> required_imu_;
   rclcpp::Time last_image_time_, curr_time_;

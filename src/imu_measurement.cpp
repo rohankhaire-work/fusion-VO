@@ -99,7 +99,7 @@ namespace imu_measurement
     return new_state;
   }
 
-  IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs)
+  IMUState imu_integration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs)
   {
     if(imu_msgs.size() < 2)
       return Eigen::Matrix4d::Identity();

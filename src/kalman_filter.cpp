@@ -6,34 +6,43 @@ namespace kalman_filter
                    const Eigen::Matrix<double, 9, 9> &Q_mat,
                    Eigen::Matrix<double, 9, 9> &P_mat, double dt)
   {
-    Eigen::Matrix<double, 9, 9> F = Eigen::Matrix<double, 9, 9>::Identity();
+    // Unbias IMU readings
+    Eigen::Vector3d acc = acc_meas - state.acc_bias;
+    Eigen::Vector3d gyro = gyro_meas - state.gyro_bias;
 
-    // Compute skew-symmetric matrices
-    Eigen::Matrix3d delta_p_cross = skewSymmetric(imu_delta.position);
-    Eigen::Matrix3d delta_v_cross = skewSymmetric(imu_delta.velocity);
+    // Integrate orientation
+    Eigen::Vector3d omega = gyro * dt;
+    double theta = omega.norm();
+    Eigen::Quaterniond dq = Eigen::Quaterniond::Identity();
 
-    // Small-angle approximation for quaternion rotation
-    Eigen::Vector3d delta_theta = 2.0 * imu_delta.rotation.vec();
-    Eigen::Matrix3d delta_theta_cross = skewSymmetric(delta_theta);
+    if(theta > 1e-5)
+    {
+      dq = Eigen::AngleAxisd(theta, omega.normalized());
+    }
 
-    // Position update
-    F.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * dt;
-    F.block<3, 3>(0, 6) = -R_k * delta_p_cross * dt;
-    // Velocity update
-    F.block<3, 3>(3, 6) = -R_k * delta_v_cross * dt;
-    // Orientation update
-    F.block<3, 3>(6, 6) -= 0.5 * delta_theta_cross * dt;
+    state.orientation = (state.orientation * dq).normalized();
 
-    // Update State
-    init_state.position += imu_delta.position;
+    // Rotate acceleration to world frame
+    Eigen::Matrix3d R = state.orientation.toRotationMatrix();
+    Eigen::Vector3d acc_world = R * acc;
 
-    // Update velocity
-    init_state.velocity += imu_delta.velocity;
+    // --- Covariance Propagation ---
+    Eigen::Matrix<double, STATE_SIZE, STATE_SIZE> F
+      = Eigen::Matrix<double, STATE_SIZE, STATE_SIZE>::Zero();
+    Eigen::Matrix<double, STATE_SIZE, 12> G
+      = Eigen::Matrix<double, STATE_SIZE, 12>::Zero();
 
-    // Update rotation (Quaternion multiplication)
-    init_state.rotation = init_state.rotation * imu_delta.rotation;
-    init_state.rotation.normalize(); // Normalize to avoid drift
+    // Block definitions
+    F.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();   // dp/dv
+    F.block<3, 3>(3, 6) = -R * Skew(acc);                // dv/dtheta
+    F.block<3, 3>(3, 9) = -R;                            // dv/dba
+    F.block<3, 3>(6, 6) = -Skew(gyro);                   // dtheta/dtheta
+    F.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity(); // dtheta/dbg
 
+    G.block<3, 3>(3, 0) = R;                            // dv/noise_acc
+    G.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();  // dtheta/noise_gyro
+    G.block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();  // noise_ba
+    G.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity(); // noise_bg
     // Covariance update
     P_mat = F * P_mat * F.transpose() + Q_mat;
   }

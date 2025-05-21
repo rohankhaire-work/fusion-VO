@@ -1,4 +1,5 @@
 #include "fusion_VO/visual_odometry.hpp"
+#include <cstdint>
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
                                double score_thresh)
@@ -10,7 +11,42 @@ VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
 
   // allocate memory for inputs and outputs
   allocateHostBuffers();
-  allocateDeviceBuffers();
+
+  // Create CUDA stream
+  cudaStreamCreate(&stream_);
+}
+
+VisualOdometry::~VisualOdometry()
+{
+  if(bindings[0])
+  {
+    cudaFree(bindings[0]);
+    bindings[0] = nullptr;
+  }
+  if(bindings[1])
+  {
+    cudaFree(bindings[1]);
+    bindings[1] = nullptr;
+  }
+  if(bindings[2])
+  {
+    cudaFree(bindings[2]);
+    bindings[2] = nullptr;
+  }
+  if(bindings[3])
+  {
+    cudaFree(bindings[3]);
+    bindings[3] = nullptr;
+  }
+  if(input_host_)
+  {
+    cudaFreeHost(input_host_);
+    input_host_ = nullptr;
+  }
+  if(stream_)
+  {
+    cudaStreamDestroy(stream_);
+  }
 }
 
 void VisualOdometry::setIntrinsicMat(double fx, double fy, double cx, double cy)
@@ -38,25 +74,43 @@ VisualOdometry::runInference(std::unique_ptr<nvinfer1::IExecutionContext> &conte
   preprocess_curr = preprocess_image(curr, resize_w_, resize_h_);
   preprocess_prev = preprocess_image(prev, resize_w_, resize_h_);
 
+  // Convert to tensor
+  std::vector<float> input_tensor = convertToTensor(preprocess_curr, preprocess_prev);
+
   // Copy first image
-  memcpy(h_input_.data(), preprocess_prev.ptr<float>(), sizeof(float) * 240 * 320);
+  std::memcpy(host_input_, input_tensor.data(),
+              2 * sizeof(float) * resize_h_ * resize_w_);
 
-  // Copy second image
-  memcpy(h_input_.data() + 240 * 320, preprocess_curr.ptr<float>(),
-         sizeof(float) * 240 * 320);
+  // Copy to Device
+  cudaMemcpyAsync(bindings[0], input_host_, 2 * 1 * resize_h_ * resize_w_ * sizeof(float),
+                  cudaMemcpyHostToDevice, stream_);
 
-  cudaStream_t stream;
-  cudaStreamCreate(&stream);
+  // Set tensor addresses before inference
+  context->setInputTensorAddress("images", bindings[0]);
+  context->setOutputTensorAddress("keypoints", bindings[1]);
+  context->setOutputTensorAddress("matches", bindings[2]);
+  context->setOutputTensorAddress("mscores", bindings[3]);
 
-  // Run inference on the input images
-  bool success = runInferenceTensorrt(context.get(), stream);
+  // Run inference
+  bool status = context->enqueueV3(stream);
+
+  // Copy the result to host allocated memory
+  cudaMemcpyAsync(output_kp_, bindings[1], 2 * max_matches_ * 2 * sizeof(int),
+                  cudaMemcpyDeviceToHost, stream_);
+  cudaMemcpyAsync(output_matches_, bindings[2], 3 * max_matches_ * sizeof(int),
+                  cudaMemcpyDeviceToHost, stream_);
+  cudaMemcpyAsync(output_scores_, bindings[3], max_matches_ * sizeof(float),
+                  cudaMemcpyDeviceToHost, stream_);
+
+  // stream sync
+  cudaStreamSynchronize(stream_);
 
   if(success)
   {
     // Post process the output
-    std::vector<int64_t> matches;
-    std::vector<float> scores;
-    postprocessModelOutput(context.get(), matches, scores);
+    std::vector<int64_t> final_matches;
+    std::vector<float> final_scores;
+    postprocessModelOutput(context.get(), final_matches, final_scores);
 
     // Get the R and T
     std::pair<Eigen::Matrix3d, Eigen::Vector3d> pose = estimatePose(matches);
@@ -71,16 +125,17 @@ void VisualOdometry::postprocessModelOutput(nvinfer1::IExecutionContext *context
                                             std::vector<int64_t> &matches,
                                             std::vector<float> &scores)
 {
-  // Get the dynamic size of the output tensor (matches)
-  nvinfer1::Dims64 matches_shape = context->getTensorShape("matches");
+  // Get the dynamic size of the output tensor (mscores)
+  nvinfer1::Dims64 matches_shape = context->getTensorShape("mscores");
 
   // Extract the valid number of matches
   size_t num_matches = matches_shape.d[0];
 
   // Copy only relevant data from host vector to std::vector
-  std::vector<int64_t> valid_matches(h_matches_.begin(),
-                                     h_matches_.begin() + num_matches * 3);
-  std::vector<float> valid_scores(h_scores_.begin(), h_scores_.begin() + num_matches);
+  std::vector<int64_t> valid_matches;
+  std::memcpy(valid_matches, output_matches_, 3 * num_matches * sizeof(int));
+  std::vector<float> valid_scores;
+  std::memcpy(valid_scores, output_scores_, num_matches * sizeof(float));
 
   // Copy matches that pass the score score threshold
   size_t valid_count = 0;
@@ -149,12 +204,41 @@ VisualOdometry::estimatePose(const std::vector<int64_t> &filtered_matches)
   return {R_eigen, t_eigen};
 }
 
-// Allocate memory initially
-void VisualOdometry::allocateHostBuffers()
+std::vector<float>
+VisualOdometry::convertToTensor(const cv::Mat &curr, const cv::Mat &prev)
 {
-  // Allocate input tensor
-  h_input_.resize(2 * resize_h_ * resize_w_);
-  h_keypoints_.resize(2 * max_matches_ * 2);
-  h_matches_.resize(3 * max_matches_);
-  h_scores_.resize(max_matches_);
+  const int total_size = 2 * 1 * resize_h_ * resize_w_;
+  std::vector<float> tensor;
+  tensor.reserve(total_size);
+
+  // flatten it
+  auto flatten = [&](const cv::Mat &img) {
+    tensor.insert(tensor.end(), (float *)img.datastart, (float *)img.dataend);
+  };
+
+  // Ordering matters
+  // prev -> curr
+  flatten(prev);
+  flatten(curr);
+
+  return tensor;
+}
+
+// Allocate memory initially
+void VisualOdometry::allocateBuffers()
+{
+  // Allocate HOST data
+  cudaMallocHost(reinterpret_cast<void **> input_host_,
+                 2 * resize_h_ * resize_w_ * sizeof(float));
+  cudaMallocHost(reinterpret_cast<void **> output_kp_,
+                 2 * max_matches_ * 2 * sizeof(int));
+  cudaMallocHost(reinterpret_cast<void **> output_matches_,
+                 max_matches_ * 3 * sizeof(int));
+  cudaMallocHost(reinterpret_cast<void **> output_scores_, max_matches_ * sizeof(float));
+
+  // Allocate data for inference output
+  cudaMalloc(&bindings[0], 2 * resize_h_ * resize_w * sizeof(float));
+  cudaMalloc(&bindings[1], 2 * max_matches_ * 2 * sizeof(int));
+  cudaMalloc(&bindings[2], max_matches_ * 3 * sizeof(int));
+  cudaMalloc(bindings[3], max_matches_ * sizeof(float));
 }
