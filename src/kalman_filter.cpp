@@ -3,13 +3,9 @@
 namespace kalman_filter
 {
   void predict_rk4(IMUState &init_state, const IMUState &imu_delta,
-                   const Eigen::Matrix<double, 9, 9> &Q_mat,
-                   Eigen::Matrix<double, 9, 9> &P_mat, double dt)
+                   const Eigen::Matrix<double, 12, 12> &Q_mat,
+                   Eigen::Matrix<double, 15, 15> &P_mat, double dt)
   {
-    // Unbias IMU readings
-    Eigen::Vector3d acc = acc_meas - state.acc_bias;
-    Eigen::Vector3d gyro = gyro_meas - state.gyro_bias;
-
     // Integrate orientation
     Eigen::Vector3d omega = gyro * dt;
     double theta = omega.norm();
@@ -27,24 +23,36 @@ namespace kalman_filter
     Eigen::Vector3d acc_world = R * acc;
 
     // --- Covariance Propagation ---
-    Eigen::Matrix<double, STATE_SIZE, STATE_SIZE> F
-      = Eigen::Matrix<double, STATE_SIZE, STATE_SIZE>::Zero();
-    Eigen::Matrix<double, STATE_SIZE, 12> G
-      = Eigen::Matrix<double, STATE_SIZE, 12>::Zero();
+    Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Zero();
+    Eigen::Matrix<double, 15, 12> G = Eigen::Matrix<double, 15, 12>::Zero();
 
     // Block definitions
-    F.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();   // dp/dv
-    F.block<3, 3>(3, 6) = -R * Skew(acc);                // dv/dtheta
-    F.block<3, 3>(3, 9) = -R;                            // dv/dba
-    F.block<3, 3>(6, 6) = -Skew(gyro);                   // dtheta/dtheta
-    F.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity(); // dtheta/dbg
+    Matrix3d R_wb = state.orientation.toRotationMatrix();
+    Vector3d a_unbiased
+      = R_wb * (imu_delta.velocity / dt - state.bias_accel); // Approximate acceleration
 
-    G.block<3, 3>(3, 0) = R;                            // dv/noise_acc
-    G.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();  // dtheta/noise_gyro
-    G.block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();  // noise_ba
-    G.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity(); // noise_bg
-    // Covariance update
-    P_mat = F * P_mat * F.transpose() + Q_mat;
+    // Fill F (state transition Jacobian)
+    F.block<3, 3>(0, 3) = Matrix3d::Identity() * dt; // ∂p/∂v
+    F.block<3, 3>(3, 6)
+      = -R_wb * skewSymmetric(a_unbiased); // ∂v/∂θ (SO(3) tangent space)
+    F.block<3, 3>(3, 9) = -R_wb;           // ∂v/∂b_a
+    F.block<3, 3>(6, 12) = -R_wb;          // ∂θ/∂b_g
+
+    // Fill G (noise Jacobian)
+    G.block<3, 3>(3, 0) = R_wb;                  // Accel noise
+    G.block<3, 3>(6, 3) = R_wb;                  // Gyro noise
+    G.block<3, 3>(9, 6) = Matrix3d::Identity();  // Accel bias random walk
+    G.block<3, 3>(12, 9) = Matrix3d::Identity(); // Gyro bias random walk
+
+    // Process noise matrix Q
+    Matrix<double, 12, 12> Q = Matrix<double, 12, 12>::Zero();
+    Q.block<3, 3>(0, 0) = accel_noise;
+    Q.block<3, 3>(3, 3) = gyro_noise;
+    Q.block<3, 3>(6, 6) = Matrix3d::Identity() * 1e-6; // Bias random walk noise
+    Q.block<3, 3>(9, 9) = Matrix3d::Identity() * 1e-6;
+
+    // Covariance update: P_new = F * P * F^T + G * Q * G^T
+    P_mat = F * P_mat * F.transpose() + G * Q * G.transpose();
   }
 
   update_vo(IMUState &init_state, const Eigen::Vector3d &pos, const Eigen::Matrix3d &rot,

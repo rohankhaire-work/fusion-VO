@@ -8,15 +8,16 @@
 #include <deque>
 
 // Define an IMU state struct
-struct IMUState
+struct IMUPreintegrationState
 {
-  Eigen::Vector3d position;
-  Eigen::Vector3d velocity;
-  Eigen::Quaterniond orientation;
-  Eigen::Vector3d bias_gyro;  // bg
-  Eigen::Vector3d bias_accel; // ba
+  Eigen::Vector3d delta_p_;
+  Eigen::Vector3d delta_v_;
+  Eigen::Quaterniond delta_q_;
+  Eigen::Vector3d bias_gyro_;  // bg
+  Eigen::Vector3d bias_accel_; // ba
+  double dt_;                  // delta_t
 
-  IMUState()
+  IMUPreintegrationState()
       : position(Eigen::Vector3d::Zero()), velocity(Eigen::Vector3d::Zero()),
         orientation(Eigen::Quaterniond::Identity())
   {}
@@ -36,7 +37,7 @@ namespace imu_measurement
   IMUState rk4_imu_integration(const IMUState &, const Eigen::Vector3d &,
                                const Eigen::Vector3d &, double);
 
-  IMUState imu_integration_RK4(const std::vector<sensor_msgs::msg::Imu> &);
+  IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &);
 }
 
 #endif // IMU_MEASUREMENT__IMU_MEASUREMENT_HPP_
