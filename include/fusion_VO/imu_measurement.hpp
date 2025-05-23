@@ -18,8 +18,8 @@ struct IMUPreintegrationState
   double dt_;                  // delta_t
 
   IMUPreintegrationState()
-      : position(Eigen::Vector3d::Zero()), velocity(Eigen::Vector3d::Zero()),
-        orientation(Eigen::Quaterniond::Identity())
+      : delta_p_(Eigen::Vector3d::Zero()), delta_v_(Eigen::Vector3d::Zero()),
+        delta_q_(Eigen::Quaterniond::Identity())
   {}
 };
 
@@ -34,10 +34,23 @@ namespace imu_measurement
   Eigen::Quaterniond
   quaternion_derivative(const Eigen::Quaterniond &, const Eigen::Vector3d &);
 
-  IMUState rk4_imu_integration(const IMUState &, const Eigen::Vector3d &,
-                               const Eigen::Vector3d &, double);
+  IMUPreintegrationState
+  rk4_imu_integration(const IMUPreintegrationState &, const Eigen::Vector3d &,
+                      const Eigen::Vector3d &, double);
 
-  IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &);
+  void computeStateTransitionJacobian(const IMUPreintegrationState &,
+                                      const Eigen::Vector3d &, const Eigen::Vector3d &,
+                                      Eigen::Matrix<double, 15, 15> &);
+
+  void
+  propagateCovariance(const IMUPreintegrationState &, Eigen::Matrix<double, 15, 15> &,
+                      const Eigen::Matrix<double, 12, 12> &,
+                      const Eigen::Matrx<double, 15, 15> &);
+
+  IMUPreintegrationState
+  imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &,
+                         Eigen::Matrix<double, 15, 15> &,
+                         Eigen::Matrix<double, 12, 12> &);
 }
 
 #endif // IMU_MEASUREMENT__IMU_MEASUREMENT_HPP_

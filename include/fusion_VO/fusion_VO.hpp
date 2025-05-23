@@ -9,9 +9,9 @@
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.hpp>
-#include <optional>
+
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/detail/nav_sat_fix__struct.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -20,7 +20,6 @@
 #include <string>
 #include <fstream>
 #include <deque>
-#include <future>
 
 // Custom TensorRT Logger
 class Logger : public nvinfer1::ILogger
@@ -56,6 +55,7 @@ private:
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &);
   void IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &);
   void GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &);
+  void RVIZCallback(const geoemtry_msgs::msg::PoseStamped::ConstSharedPtr &);
   void timerCallback();
 
   // Tensorrt
@@ -71,7 +71,7 @@ private:
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
   double fx_, fy_, cx_, cy_;
-  bool use_absolute_coords_;
+  bool use_gnss_initializer_, use_rviz_initializer_;
 
   // Variables
   cv::Mat prev_frame_;
@@ -85,7 +85,8 @@ private:
   Eigen::Vector3d gps_position_;
   bool init_pose_available_ = false;
   bool new_gps_, new_vo_ = false;
-  Eigen::Matrix<double, 9, 9> P_mat_, Q_mat_;
+  Eigen::Matrix<double, 15, 15> P_mat_;
+  Eigen::Matrix<double, 12, 12> Q_mat_;
   Eigen::Matrix<double, 6, 6> R_vo_;
 
   // Functions

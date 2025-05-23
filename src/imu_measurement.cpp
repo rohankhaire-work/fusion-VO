@@ -46,26 +46,28 @@ namespace imu_measurement
     return 0.5 * q * omega_quat;
   }
 
-  IMUState rk4_imu_integration(const IMUState &state, const Eigen::Vector3d &accel,
-                               const Eigen::Vector3d &gyro, double dt)
+  // PERFROM BODY-FRAME IMU PRE-INTEGRATION USING RK4
+  IMUPreintegrationState
+  rk4_imu_integration(const IMUPreintegrationState &preint, const Eigen::Vector3d &accel,
+                      const Eigen::Vector3d &gyro, double dt)
   {
     // Unbiased measurements
-    Vector3d acc_unbias = curr.acc - state.bias_accel;
-    Vector3d gyro_unbias = curr.gyro - state.bias_gyro;
+    Vector3d acc_unbias = accel - preint.bias_accel;
+    Vector3d gyro_unbias = gyro - preint.bias_gyro;
 
     // Step 1 (k1)
-    Eigen::Quaterniond k1_q = quaternion_derivative(state.orientation, gyro_unbias);
-    Eigen::Vector3d k1_v = state.orientation * state.bias_accel;
-    Eigen::Vector3d k1_p = state.velocity;
+    Eigen::Quaterniond k1_q = quaternion_derivative(preint.orientation, gyro_unbias);
+    Eigen::Vector3d k1_v = preint.orientation * acc_unbias;
+    Eigen::Vector3d k1_p = preint.velocity;
 
     // Step 2 (k2)
     Eigen::Quaterniond q2 = state.orientation
                             * Eigen::Quaterniond(1, 0.5 * k1_q.x() * dt,
                                                  0.5 * k1_q.y() * dt, 0.5 * k1_q.z() * dt)
                                 .normalized();
-    Eigen::Vector3d v2 = state.velocity + 0.5 * dt * k1_v;
+    Eigen::Vector3d v2 = preint.velocity + 0.5 * dt * k1_v;
     Eigen::Quaterniond k2_q = quaternion_derivative(q2, gyro_unbias);
-    Eigen::Vector3d k2_v = q2 * state.bias_accel;
+    Eigen::Vector3d k2_v = q2 * preint.bias_accel;
     Eigen::Vector3d k2_p = v2;
 
     // Step 3 (k3)
@@ -73,22 +75,22 @@ namespace imu_measurement
                             * Eigen::Quaterniond(1, 0.5 * k2_q.x() * dt,
                                                  0.5 * k2_q.y() * dt, 0.5 * k2_q.z() * dt)
                                 .normalized();
-    Eigen::Vector3d v3 = state.velocity + 0.5 * dt * k2_v;
+    Eigen::Vector3d v3 = preint.velocity + 0.5 * dt * k2_v;
     Eigen::Quaterniond k3_q = quaternion_derivative(q3, gyro_unbias);
-    Eigen::Vector3d k3_v = q3 * state.bias_accel;
+    Eigen::Vector3d k3_v = q3 * preint.bias_accel;
     Eigen::Vector3d k3_p = v3;
 
     // Step 4 (k4)
     Eigen::Quaterniond q4
       = state.orientation
         * Eigen::Quaterniond(1, k3_q.x() * dt, k3_q.y() * dt, k3_q.z() * dt).normalized();
-    Eigen::Vector3d v4 = state.velocity + dt * k3_v;
+    Eigen::Vector3d v4 = preint.velocity + dt * k3_v;
     Eigen::Quaterniond k4_q = quaternion_derivative(q4, gyro_unbias);
-    Eigen::Vector3d k4_v = q4 * state.bias_accel;
+    Eigen::Vector3d k4_v = q4 * preint.bias_accel;
     Eigen::Vector3d k4_p = v4;
 
     // Compute final integrated values
-    IMUState new_state;
+    IMUPreintegrationState new_state;
     new_state.orientation
       = state.orientation
         * Eigen::Quaterniond(
@@ -103,63 +105,80 @@ namespace imu_measurement
     return new_state;
   }
 
-  void computeFG(const IMUPreintegrationState &pre_int,
-                 const Quaterniond &q_wb, // Current orientation (world-to-body)
-                 Matrix<double, 15, 15> &F, Matrix<double, 15, 12> &G)
+  // TRACK BODY FRAME JACOBIAN AND NOISE MATRICES
+  void computeStateTransitionJacobian(const IMUPreintegrationState &pre_int,
+                                      const Eigen::Vector3d &accel,
+                                      const Eigen::Vector3d &gyro,
+                                      Eigen::Matrix<double, 15, 15> &F)
   {
+    auto a_unbiased = accel - preint.bias_accel;
+    auto w_unbiased = gyro - preint.bias_gyro;
+
     Eigen::Matrix<double, 15, 15> A = Eigen::Matrix<double, 15, 15>::Zero();
-    Eigen::Vector3d a_unbiased
-      = R_wb * (pre_int.delta_v_ / pre_int.dt_ - pre_int.bias_accel);
 
-    // Position wrt velocity
-    A.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
+    // Position wrt velocity (body frame)
+    A.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * dt; // ∂Δp/∂v = I·Δt
 
-    // Velocity wrt orientation (SO(3) tangent space)
-    A.block<3, 3>(3, 6) = -R_wb * skewSymmetric(a_unbiased);
+    // Velocity wrt orientation (body frame, uses pre-integrated a_unbiased)
+    A.block<3, 3>(3, 6) = -skewSymmetric(a_unbiased) * dt; // ∂Δv/∂θ = -[a]×·Δt
 
-    // Velocity wrt accel bias
-    A.block<3, 3>(3, 9) = -R_wb;
+    // Velocity wrt accel bias (body frame)
+    A.block<3, 3>(3, 9) = -Eigen::Matrix3d::Identity() * dt; // ∂Δv/∂b_a = -I·Δt
 
-    // Orientation wrt angular velocity
-    A.block<3, 3>(6, 6) = -skewSymmetric(w_unbiased);
+    // Orientation wrt angular velocity (body frame)
+    A.block<3, 3>(6, 6) = -skewSymmetric(w_unbiased) * dt; // ∂Δq/∂θ = -[w]×·Δt
 
-    // Orientation wrt gyro bias
-    A.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity();
+    // Orientation wrt gyro bias (body frame)
+    A.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity() * dt; // ∂Δq/∂b_g = -I·Δt
 
-    // Biases: simple random walk (0 or damping)
-    A.block<3, 3>(9, 9) = Eigen::Matrix3d::Zero();   // acc bias
+    // Biases (random walk)
+    A.block<3, 3>(9, 9) = Eigen::Matrix3d::Zero();   // accel bias
     A.block<3, 3>(12, 12) = Eigen::Matrix3d::Zero(); // gyro bias
-    // Biases are modeled as random walk (identity diagonal)
 
-    // --- Noise Jacobian (G) ---
-    // Accelerometer noise affects velocity and position
-    G.block<3, 3>(3, 0) = R_wb;                                 // ∂v/∂η_a
-    G.block<3, 3>(0, 0) = R_wb * 0.5 * pre_int.dt * pre_int.dt; // ∂p/∂η_a
-
-    // Gyro noise affects orientation
-    G.block<3, 3>(6, 3) = R_wb; // ∂θ/∂η_g
-
-    // Bias random walk noise
-    G.block<3, 3>(9, 6) = Matrix3d::Identity();  // ∂b_a/∂η_ba
-    G.block<3, 3>(12, 9) = Matrix3d::Identity(); // ∂b_g/∂η_bg
-
-    // 3. Discrete-time propagation
-    Matrix<double, 15, 15> I15 = Matrix<double, 15, 15>::Identity();
-    Matrix<double, 15, 15> Phi = I15 + A * dt;
+    Eigen::Matrix<double, 15, 15> I15 = Eigen::Matrix<double, 15, 15>::Identity();
+    Eigen::Matrix<double, 15, 15> Phi = (I15 + A);
 
     F = Phi * F;
-    P_mat = Phi * P_mat * Phi.transpose() + G_mat * Q_noise * G_mat.transpose() * dt;
   }
 }
 
-IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs)
+void propagateCovariance(const IMUPreintegrationState &imu_preint,
+                         Eigen::Matrix<double, 15, 15> &P_mat,
+                         const Eigen::Matrix<double, 12, 12> &Q_mat,
+                         const Eigen::Matrx<double, 15, 15> &F_mat)
+{
+  // --- Noise Jacobian (G)  const ---
+  Eigen::Matrix<double, 15, 12> G_mat = Eigen::Matrix<double, 15, 12>::Zero();
+
+  // Accelerometer noise → velocity (body frame)
+  G.block<3, 3>(3, 0) = Matrix3d::Identity() * imu_preint.dt; // ∂Δv/∂η_a
+
+  // Accelerometer noise → position (body frame)
+  G.block<3, 3>(0, 0)
+    = 0.5 * imu_preint.dt * imu_preint.dt * Matrix3d::Identity(); // ∂Δp/∂η_a
+
+  // Gyro noise → orientation (body frame)
+  G.block<3, 3>(6, 3) = Matrix3d::Identity() * imu_preint.dt; // ∂Δq/∂η_g
+
+  // Bias random walk noise
+  G.block<3, 3>(9, 6) = Matrix3d::Identity();  // ∂b_a/∂η_ba
+  G.block<3, 3>(12, 9) = Matrix3d::Identity(); // ∂b_g/∂η_bg
+
+  P_mat = F_mat * P_mat * F_mat.transpose() + Q_mat * G_mat * Q_mat.transpose();
+}
+
+// Computes body-frame pre-integration and state transition and noise matrices
+IMUPreintegrationState
+imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
+                       Eigen::Matrix<double, 15, 15> &P_mat,
+                       Eigen::Matrix<double, 12, 12> &Q_mat)
 {
   if(imu_msgs.size() < 2)
     return Eigen::Matrix4d::Identity();
 
   // Initial state
   IMUPreintegrationState imu_preint;
-  Eigen::matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Identity();
+  Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Identity();
 
   for(size_t i = 1; i < imu_msgs.size(); ++i)
   {
@@ -177,13 +196,15 @@ IMUState imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_ms
                          imu_msgs[i].angular_velocity.z);
 
     // Perform RK4 integration
-    imu_state = rk4_imu_preintegration(imu_state, accel, gyro, dt);
+    imu_preint = rk4_imu_preintegration(imu_preint, accel, gyro, dt);
 
     // Compute F and G for the pre-integrated values
-    computeFG(imu_state, q_wb)
+    computeStateTransitionJacobian(imu_preint, accel, gyro, F);
+
+    // EKF step - propogate covariance
+    propagateCovariance(imu_state, P_mat, Q_mat, F);
   }
 }
 
 return imu_state;
-}
 }

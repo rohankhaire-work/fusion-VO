@@ -14,7 +14,8 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   fy_ = declare_parameter("fy", 0.0);
   cx_ = declare_parameter("cx", 0.0);
   cy_ = declare_parameter("cy", 0.0);
-  use_absolute_coords_ = declare_parameter("absolute_coords", false);
+  use_gnss_initializer_ = declare_parameter("use_gnss", false);
+  use_rviz_initializer_ = declare_parameter("use_rviz", true);
 
   // Set VisualOdometry Class
   visual_odometry_ = VisualOdometry(resize_w_, resize_h_, num_keypoints_, score_thresh_);
@@ -41,9 +42,13 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
 
   // USe absolute absolute coords
   // used when there is a map frame
-  if(use_absolute_coords_)
+  if(use_gnss_initializer_)
     gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
       gps_topic_, 1, std::bind(&FusionVO::GPSCallback, this, std::placeholders::_1));
+
+  if(use_rviz_initializer_)
+    rviz_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+      "/goal_pose", 1, std::bind(&FusionVO::RVIZCallback, this, std::placeholders::_1));
 
   timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&FusionVO::timerCallback, this));
