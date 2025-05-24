@@ -5,6 +5,7 @@
 #include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/gps_measurement.hpp"
 #include "fusion_VO/kalman_filter.hpp"
+#include "kalman_filter.hpp"
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
@@ -15,6 +16,9 @@
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <memory>
 #include <string>
@@ -68,10 +72,11 @@ private:
   std::string imu_topic_;
   std::string gps_topic_;
   std::string weight_file_;
+  std::String imu_frame_, camera_frame_, base_frame_, map_frame_;
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
   double fx_, fy_, cx_, cy_;
-  bool use_gnss_initializer_, use_rviz_initializer_;
+  std::string pose_initializer_;
 
   // Variables
   cv::Mat prev_frame_;
@@ -85,13 +90,23 @@ private:
   Eigen::Vector3d gps_position_;
   bool init_pose_available_ = false;
   bool new_gps_, new_vo_ = false;
-  Eigen::Matrix<double, 15, 15> P_mat_;
+  Eigen::Matrix<double, 16, 16> P_mat_;
   Eigen::Matrix<double, 12, 12> Q_mat_;
-  Eigen::Matrix<double, 6, 6> R_vo_;
+  Eigen::Matrix<double, 6, 6> R_mat_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
+  EKFState ekf_state_;
+  geometry_msgs::msg::PoseStamped global_pose_;
 
   // Functions
   void initializeEngine(const std::string &);
-  void publishFrameAndOdometry(const rclcpp::Publisher &, const IMUState &);
+  geometry_msgs::msg::Pose
+  transformPoseMsg(const Eigen::Matrix3d &, const Eigen::Vector3d &, const std::string &,
+                   const std::string &);
+  geometry_msgs::msg::Pose transformPoseMsg(const geometry_msgs::msg::Pose &,
+                                            const std::string &, const std::string &);
+
+  void publishFrameAndOdometry(const rclcpp::Publisher &, const EKFState &);
   void setP(bool);
   void setQ();
   void setR_vo();

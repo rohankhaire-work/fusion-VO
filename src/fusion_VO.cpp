@@ -6,6 +6,10 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   imu_topic_ = declare_parameter<std::string>("imu_topic", "");
   gps_topic_ = declare_parameter<std::string>("gps_topic", "");
   weight_file_ = declare_parameter<std::string>("weight_file", "");
+  imu_frame_ = declare_parameter<std::String>("imu_frame", "");
+  camera_frame_ = declare_parameter<std::String>("camera_frame", "");
+  base_frame_ = declare_parameter<std::string>("base_frame", "");
+  map_frame_ = declare_parameter<std::string>("map_frame", "");
   resize_w_ = declare_parameter("resize_width", 416);
   resize_h_ = declare_parameter("resize_height", 416);
   num_keypoints_ = declare_parameter("num_keypoints", 1024);
@@ -14,8 +18,7 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   fy_ = declare_parameter("fy", 0.0);
   cx_ = declare_parameter("cx", 0.0);
   cy_ = declare_parameter("cy", 0.0);
-  use_gnss_initializer_ = declare_parameter("use_gnss", false);
-  use_rviz_initializer_ = declare_parameter("use_rviz", true);
+  pose_initializer_ = declare_parameter<std::string>("pose_initializer", "");
 
   // Set VisualOdometry Class
   visual_odometry_ = VisualOdometry(resize_w_, resize_h_, num_keypoints_, score_thresh_);
@@ -24,6 +27,15 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   if(img_topic_.empty() || weight_file_.empty())
   {
     RCLCPP_ERROR(get_logger(), "Image topic or weight file is not specified");
+    return;
+  }
+
+  if(pose_initializer_ != "rviz" && pose_initializer_ != "gnss"
+     && pose_initializer_ != "local")
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Pose initializer is not set correctly. The options are gnss, rviz, or local")
     return;
   }
 
@@ -37,16 +49,13 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   // publisher
   odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("fusion_vo/odom", 10);
 
-  // TF Broadcaster
-  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
-
-  // USe absolute absolute coords
+  // Use absolute absolute coords
   // used when there is a map frame
-  if(use_gnss_initializer_)
+  if(pose_initializer_ == "gnss")
     gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
       gps_topic_, 1, std::bind(&FusionVO::GPSCallback, this, std::placeholders::_1));
 
-  if(use_rviz_initializer_)
+  if(pose_initializer_ == "rviz")
     rviz_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/goal_pose", 1, std::bind(&FusionVO::RVIZCallback, this, std::placeholders::_1));
 
@@ -56,12 +65,24 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   // Initialize TensorRT
   initializeEngine(weight_file_);
 
-  // Initialize the state of our system
+  // Initialize tf2 for transforms
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
+  tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
+  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
+  // set EKF state
   // and covariance matrices
-  init_state_ = IMUState();
+  init_state_ = EKFState();
   setP(use_absolute_coords_);
   setQ();
-  setR_vo();
+  setR();
+
+  // Set global pose
+  if(pose_initializer_ == "local")
+  {
+    setGlobalPose(global_pose_);
+    init_pose_available_ = true;
+  }
 }
 
 FusionVO::~FusionVO()
@@ -93,15 +114,18 @@ void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &ms
   // Calcualte absoulte position in CARLA from GPS
   gps_position_ = gps_measurement::compute_absolute_position(msg);
 
-  // Set pose available to true
-  if(!init_gps_available_ && absolute_coords)
-  {
-    init_state_.position.x() = gps_position_.x();
-    init_state_.position.y() = gps_position_.y();
-    init_state_.position.z() = gps_position_.z();
-  }
-  init_gps_available_ = true;
-  new_gps_ = true;
+  if(!init_pose_available_)
+    setGlobalPose(global_pose_, gps_position_);
+
+  init_pose_available_ = true;
+}
+
+void FusionVO::RVIZCallback(const geometry_msgs::msgs::PoseStamped::ConstSharedPtr &msg)
+{
+  if(!init_pose_availablie_)
+    setGlobalPose(global_pose_, *msg);
+
+  init_pose_available_ = true;
 }
 
 void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
@@ -117,9 +141,10 @@ void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() && required_imu_.empty())
+  if(init_image_.empty() && required_imu_.empty() && !init_pose_available_)
   {
-    RCLCPP_WARN(this->get_logger(), "Image and IMU data are not available in FusionVO");
+    RCLCPP_WARN(this->get_logger(),
+                "Image or IMU or Initial pose data are not available in FusionVO");
     return;
   }
 
@@ -134,18 +159,16 @@ void FusionVO::timerCallback()
     required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
                                                           last_image_time_, curr_time_);
     // Get IMU Preintegration using RK4
-    // Use this for Pose Graph Optimization
-    auto imu_pose = imu_measurement::imu_integration_RK4(required_imu_);
+    // Coviariance propagation occurs in this step (kalman predict)
+    auto imu_pose = imu_measurement::imu_integration_RK4(required_imu_, P_mat_, Q_mat_);
     auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
-    // Kalman predict
-    kalman_filter::predict_rk4(init_state_, imu_pose, Q_mat_, P_mat_, dt);
+    // Convert vo_pose to imu body frame
+    geometry_msgs::msg::Pose transformed_vo_pose
+      = transformPoseMsg(vo_pose.first, vo_pose.second, imu_frame_, camera_frame_);
 
     // Kalman update
-    kalman_filter::update_vo(init_state_, vo_pose.first, vo_pose.second, R_vo_, P_mat_);
-
-    if(new_gps_)
-      kalman_filter::update_gps(init_state_, gps_position_, R_mat_gps_);
+    kalman_filter::update_vo(ekf_state_, imu_pose, transformed_vo_pose, P_mat_, R_mat_);
   }
 
   // Publish TF Frame and odometry msg
@@ -226,7 +249,7 @@ void FusionVO::setQ()
   Q_mat_.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * (sigma_omega * sigma_omega);
 }
 
-void FusionVO::setR_vo()
+void FusionVO::setR()
 {
   // VO noise parameters (adjust based on your VO accuracy)
   double sigma_p = 0.1;       // Translation noise (meters)
@@ -239,29 +262,13 @@ void FusionVO::setR_vo()
   R_vo_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_theta * sigma_theta);
 }
 
-void FusionVO::publishFrameAndOdometry(const rclcpp::Publisher &odom_pub,
-                                       const IMUState &state)
+void FusionVO::publishOdometry(const rclcpp::Publisher &odom_pub, const EKFState &state)
 {
-  // --- Publish TF Transform ---
-  geometry_msgs::msg::TransformStamped transform_msg;
-  transform_msg.header.stamp = rclcpp::Clock(RCL_TIME_NOW).now();
-  transform_msg.header.frame_id = "odom";
-
-  transform_msg.transform.translation.x = position.x();
-  transform_msg.transform.translation.y = position.y();
-  transform_msg.transform.translation.z = position.z();
-
-  transform_msg.transform.rotation.x = quaternion.x();
-  transform_msg.transform.rotation.y = quaternion.y();
-  transform_msg.transform.rotation.z = quaternion.z();
-  transform_msg.transform.rotation.w = quaternion.w();
-
-  tf_broadcaster_->sendTransform(transform_msg);
-
   // --- Publish Odometry Message ---
   nav_msgs::msg::Odometry odom_msg;
   odom_msg.header.stamp = rclcpp::Clock(RCL_TIME_NOW).now();
-  odom_msg.header.frame_id = "hero";
+  odom_msg.header.frame_id = map_frame_;
+  odom_msg.child_frame_id = base_frame_;
 
   odom_msg.pose.pose.position.x = state.position.x();
   odom_msg.pose.pose.position.y = state.position.y();
@@ -277,6 +284,100 @@ void FusionVO::publishFrameAndOdometry(const rclcpp::Publisher &odom_pub,
   odom_msg.twist.twist.linear.z = state.velocity.z();
 
   odom_pub_.publish(odom_msg);
+}
+
+geometry_msgs::msg::Pose
+FusionVO::transformPoseMsg(const geometry_msgs::msg::Pose &obj_pose,
+                           const std::string &source, const std::string &target)
+{
+  geometry_msgs::msg::Pose base_pose;
+
+  try
+  {
+    // Lookup transform from camera frame to base frame
+    geometry_msgs::msg::TransformStamped transform_stamped
+      = tf_buffer_->lookupTransform(target, source, tf2::TimePointZero);
+
+    // Transform the point
+    tf2::doTransform(obj_pose, base_pose, transform_stamped);
+  }
+  catch(tf2::TransformException &ex)
+  {
+    RCLCPP_ERROR(get_logger(), "Transform failed: %s", ex.what());
+  }
+
+  return base_pose;
+}
+
+geometry_msgs::msg::Pose
+FusionVO::transformPoseMsg(const Eigen::Matrix3d &rot, const Eigen::Vector3d &pos,
+                           const std::string &source, const std::string &target)
+{
+  geometry_msgs::msg::Pose base_pose;
+
+  // Convert rot and pos to geometry_msgs pose
+  geometry_msgs::msg::pose cam_pose;
+  // Set orinetation
+  Eigen::Quaterniond curr_quat(rot);
+  cam_pose.orientation.x = curr_quat.x();
+  cam_pose.orientation.y = curr_quat.y();
+  cam_pose.orientation.z = curr_quat.z();
+  cam_pose.oreintation.w = curr_qaut.w();
+  // Set position
+  cam_pose.position.x = pos.x();
+  cam_pose.posiiton.y = pos.y();
+  cam_pose.position.z = pos.z();
+
+  try
+  {
+    // Lookup transform from camera frame to base frame
+    geometry_msgs::msg::TransformStamped transform_stamped
+      = tf_buffer_->lookupTransform(target, source, tf2::TimePointZero);
+
+    // Transform the point
+    tf2::doTransform(cam_pose, base_pose, transform_stamped);
+  }
+  catch(tf2::TransformException &ex)
+  {
+    RCLCPP_ERROR(get_logger(), "Transform failed: %s", ex.what());
+  }
+
+  return base_pose;
+}
+
+void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose)
+{
+  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  pose.header.frame_id = base_frame_;
+  pose.position.x = 0.0;
+  pose.position.y = 0.0;
+  pose.position.z = 0.0;
+  pose.orientation.x = 0.0;
+  pose.orientation.y = 0.0;
+  pose.orientation.z = 0.0;
+  pose.orientation.w = 1.0;
+}
+
+void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose,
+                             const geometry_msgs::msg::Pose &ref_pose)
+{
+  pose = ref_pose;
+  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  pose.header.frame_id = base_frame_;
+}
+
+void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose,
+                             const Eigen::Vector3d &pos_vec)
+{
+  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  pose.header.frame_id = base_frame_;
+  pose.position.x = pos_vec.x();
+  pose.position.y = pos_vec.y();
+  pose.position.z = pos_vec.z();
+  pose.orientation.x = 0.0;
+  pose.orientation.y = 0.0;
+  pose.orientation.z = 0.0;
+  pose.orientation.w = 1.0;
 }
 
 int main(int argc, char *argv[])

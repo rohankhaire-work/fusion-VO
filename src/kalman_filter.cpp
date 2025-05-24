@@ -3,45 +3,70 @@
 namespace kalman_filter
 {
 
-  update_vo(IMUState &init_state, const Eigen::Vector3d &pos, const Eigen::Matrix3d &rot,
+  update_vo(IMUPreintegrationState &imu_preint, const geometry_msgs::msg::Pose &vo_pose,
             const Eigen::Matrix<double, 6, 6> &R_mat, Eigen::Matrix<double, 9, 9> &P_mat);
   {
-    // Extract estimated state
-    Eigen::Vector3d p_est = init_state.position;
-    Eigen::Matrix3d R_est = init_state.rotation.toRotationMatrix();
+    // Convert geometry_msgs to Eigen
+    Quaterniond q_vo;
+    Vector3d t_vo;
 
-    // Compute position innovation
-    Eigen::Vector3d e_p = p_vo - p_est;
+    tf2::Quaternion tf_q;
+    tf2::fromMsg(vo_pose_msg.orientation, tf_q);
+    q_vo = Eigen::Quaterniond(tf_q.w(), tf_q.x(), tf_q.y(), tf_q.z());
 
-    // Compute rotation innovation using SO(3) logarithm
-    Eigen::Matrix3d dR = R_vo * R_est.transpose();
-    Eigen::AngleAxisd angle_axis(dR);
-    Eigen::Vector3d e_R = angle_axis.angle() * angle_axis.axis();
+    t_vo
+      = Vector3d(vo_pose_msg.position.x, vo_pose_msg.position.y, vo_pose_msg.position.z);
 
-    // Construct measurement residual
-    Eigen::Matrix<double, 6, 1> y;
-    y << e_p, e_R;
+    // ----- Predicted measurement -----
+    Eigen::Vector3d h_pos = imu_preint.scale_ * t_vo;
+    Eigen::Quaterniond h_q = state.delta_q;
 
-    // Observation matrix H (6x9)
-    Eigen::Matrix<double, 6, 9> H = Eigen::Matrix<double, 6, 9>::Zero();
-    H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity(); // Position
-    H.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity(); // Rotation
+    // --- Residual ---
+    Vector3d r_pos = imu_preint.delta_p_ - h_pos;
 
-    // Compute Kalman Gain
-    Eigen::Matrix<double, 9, 6> K
-      = P_mat * H.transpose() * (H * P_mat * H.transpose() + R_mat).inverse();
+    // Rotation residual: log(q_vo * h_q⁻¹)
+    Quaterniond dq = q_vo * h_q.inverse();
+    AngleAxisd aa(dq);
+    Vector3d r_rot = aa.angle() * aa.axis();
 
-    // Update state
-    state.position += K.block<3, 6>(0, 0) * y;
-    state.velocity += K.block<3, 6>(3, 0) * y;
+    // --- 4. Construct residual vector ---
+    Matrix<double, 6, 1> r;
+    r.segment<3>(0) = r_pos;
+    r.segment<3>(3) = r_rot;
 
-    Eigen::Vector3d dq = K.block<3, 6>(6, 0) * y;
-    Eigen::Quaterniond q_update
-      = Eigen::Quaterniond(1, 0.5 * dq.x(), 0.5 * dq.y(), 0.5 * dq.z());
-    state.quaternion = (q_update * quat).coeffs(); // Quaternion update
+    // --- 5. Measurement Jacobian ---
+    Matrix<double, 6, 16> H = Matrix<double, 6, 16>::Zero();
 
-    // Update covariance
-    P_mat = (Eigen::Matrix<double, 9, 9>::Identity() - K * H) * P_mat;
+    // Position: ∂(s * Δp) / ∂Δp
+    H.block<3, 3>(0, 0) = Matrix3d::Identity();
+    // Position: ∂(s * Δp) / ∂s
+    H.block<3, 1>(0, 15) = -t_vo;
+
+    // Rotation: ∂(log(q_vo * q⁻¹)) / ∂q ≈ Identity (small angle)
+    H.block<3, 3>(3, 6) = Matrix3d::Identity(); // linearized log map
+
+    // --- 6. Kalman Gain ---
+    Matrix<double, 6, 6> S = H * P * H.transpose() + R_mat_;
+    Matrix<double, 16, 6> K = P * H.transpose() * S.inverse();
+
+    // --- 7. State update ---
+    Matrix<double, 16, 1> dx = K * r;
+
+    imu_preint.delta_p_ += dx.segment<3>(0);
+    imu_preint.delta_v_ += dx.segment<3>(3);
+
+    // Update quaternion with small-angle approximation
+    Vector3d dtheta = dx.segment<3>(6);
+    Quaterniond dq_upd(1, 0.5 * dtheta.x(), 0.5 * dtheta.y(), 0.5 * dtheta.z());
+    imu_preint.delta_q_ = (dq_upd * state.delta_q).normalized();
+
+    imu_preint.bias_accel_ += dx.segment<3>(9);
+    imu_preint.bias_gyro_ += dx.segment<3>(12);
+    imu_preint.scale_ += dx(15);
+
+    // --- 8. Covariance update ---
+    Matrix<double, 16, 16> I = Matrix<double, 16, 16>::Identity();
+    P_mat_ = (I - K * H) * P_mat_;
   }
 
   Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v)
@@ -49,6 +74,13 @@ namespace kalman_filter
     Eigen::Matrix3d skew;
     skew << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0;
     return skew;
+  }
+
+  // SO(3) Log map
+  Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R)
+  {
+    Eigen::AngleAxisd aa(R);
+    return aa.angle() * aa.axis();
   }
 
 }

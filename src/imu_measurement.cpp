@@ -109,12 +109,12 @@ namespace imu_measurement
   void computeStateTransitionJacobian(const IMUPreintegrationState &pre_int,
                                       const Eigen::Vector3d &accel,
                                       const Eigen::Vector3d &gyro,
-                                      Eigen::Matrix<double, 15, 15> &F)
+                                      Eigen::Matrix<double, 16, 16> &F)
   {
     auto a_unbiased = accel - preint.bias_accel;
     auto w_unbiased = gyro - preint.bias_gyro;
 
-    Eigen::Matrix<double, 15, 15> A = Eigen::Matrix<double, 15, 15>::Zero();
+    Eigen::Matrix<double, 16, 16> A = Eigen::Matrix<double, 16, 16>::Zero();
 
     // Position wrt velocity (body frame)
     A.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * dt; // ∂Δp/∂v = I·Δt
@@ -135,20 +135,20 @@ namespace imu_measurement
     A.block<3, 3>(9, 9) = Eigen::Matrix3d::Zero();   // accel bias
     A.block<3, 3>(12, 12) = Eigen::Matrix3d::Zero(); // gyro bias
 
-    Eigen::Matrix<double, 15, 15> I15 = Eigen::Matrix<double, 15, 15>::Identity();
-    Eigen::Matrix<double, 15, 15> Phi = (I15 + A);
+    Eigen::Matrix<double, 16, 16> I15 = Eigen::Matrix<double, 16, 16>::Identity();
+    Eigen::Matrix<double, 16, 16> Phi = (I15 + A);
 
     F = Phi * F;
   }
 }
 
 void propagateCovariance(const IMUPreintegrationState &imu_preint,
-                         Eigen::Matrix<double, 15, 15> &P_mat,
+                         Eigen::Matrix<double, 16, 16> &P_mat,
                          const Eigen::Matrix<double, 12, 12> &Q_mat,
-                         const Eigen::Matrx<double, 15, 15> &F_mat)
+                         const Eigen::Matrx<double, 16, 16> &F_mat)
 {
   // --- Noise Jacobian (G)  const ---
-  Eigen::Matrix<double, 15, 12> G_mat = Eigen::Matrix<double, 15, 12>::Zero();
+  Eigen::Matrix<double, 16, 12> G_mat = Eigen::Matrix<double, 15, 12>::Zero();
 
   // Accelerometer noise → velocity (body frame)
   G.block<3, 3>(3, 0) = Matrix3d::Identity() * imu_preint.dt; // ∂Δv/∂η_a
@@ -178,7 +178,7 @@ imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
 
   // Initial state
   IMUPreintegrationState imu_preint;
-  Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Identity();
+  Eigen::Matrix<double, 16, 16> F = Eigen::Matrix<double, 16, 16>::Identity();
 
   for(size_t i = 1; i < imu_msgs.size(); ++i)
   {

@@ -15,11 +15,12 @@ struct IMUPreintegrationState
   Eigen::Quaterniond delta_q_;
   Eigen::Vector3d bias_gyro_;  // bg
   Eigen::Vector3d bias_accel_; // ba
+  double scale_;               // Scale as state
   double dt_;                  // delta_t
 
   IMUPreintegrationState()
       : delta_p_(Eigen::Vector3d::Zero()), delta_v_(Eigen::Vector3d::Zero()),
-        delta_q_(Eigen::Quaterniond::Identity())
+        delta_q_(Eigen::Quaterniond::Identity(), scale_(1.0))
   {}
 };
 
