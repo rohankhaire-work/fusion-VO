@@ -1,4 +1,5 @@
 #include "fusion_VO/fusion_VO.hpp"
+#include <istream>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -147,37 +148,41 @@ void FusionVO::timerCallback()
                 "Image or IMU or Initial pose data are not available in FusionVO");
     return;
   }
+  // Initialize EKF state
+  EKFState ekf_state = EKFState();
 
   // Assign curr frame
   curr_frame_ = init_image_;
 
   if(!curr_frame_.empty() && !prev_frame_.empty() && !new_vo_)
   {
-    double dt = (curr_time_ - last_image_time_).seconds();
     // Work on copy of buffer
     auto imu_buffer_copy = imu_buffer_;
     required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
                                                           last_image_time_, curr_time_);
     // Get IMU Preintegration using RK4
     // Coviariance propagation occurs in this step (kalman predict)
-    auto imu_pose = imu_measurement::imu_integration_RK4(required_imu_, P_mat_, Q_mat_);
-    auto vo_pose = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
+    auto imu_delta = imu_measurement::imu_integration_RK4(required_imu_, P_mat_, Q_mat_);
+    auto vo_delta = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
-    // Convert vo_pose to imu body frame
-    geometry_msgs::msg::Pose transformed_vo_pose
-      = transformPoseMsg(vo_pose.first, vo_pose.second, imu_frame_, camera_frame_);
+    // Convert vo_delta to imu body frame
+    geometry_msgs::msg::Pose transformed_vo_delta
+      = transformPoseMsg(vo_delta.first, vo_delta.second, imu_frame_, camera_frame_);
 
     // Kalman update
-    kalman_filter::update_vo(ekf_state_, imu_pose, transformed_vo_pose, P_mat_, R_mat_);
-  }
+    kalman_filter::update_vo(ekf_state, imu_delta, transformed_vo_delta, P_mat_, R_mat_);
 
-  // Publish TF Frame and odometry msg
-  publishFrameAndOdometry(init_state_);
+    // Convert to World Frame
+    convertToWorldFrame(ekf_state);
+
+    // Publish TF Frame and odometry msg
+    publishTFFrame();
+    publishOdometry();
+  }
 
   last_image_time_ = curr_time_;
   prev_frame_ = curr_frame_;
   new_vo_ = false;
-  new_gps_ = false;
 }
 
 void FusionVO::initializeEngine(const std::string &engine_path)
@@ -345,39 +350,156 @@ FusionVO::transformPoseMsg(const Eigen::Matrix3d &rot, const Eigen::Vector3d &po
   return base_pose;
 }
 
-void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose)
+void convertToWorldFrame(const EKFState &ekf_state)
 {
-  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
-  pose.header.frame_id = base_frame_;
-  pose.position.x = 0.0;
-  pose.position.y = 0.0;
-  pose.position.z = 0.0;
-  pose.orientation.x = 0.0;
-  pose.orientation.y = 0.0;
-  pose.orientation.z = 0.0;
-  pose.orientation.w = 1.0;
+  Eigen::Quaterniond rot_global;
+  // Convert to Eigen
+  Eigen::Quaterniond q_map(
+    imu_map_pose.pose.orientation.w, imu_map_pose.pose.orientation.x,
+    imu_map_pose.pose.orientation.y, imu_map_pose.pose.orientation.z);
+  q_map.normalize();
+
+  // Get delta P and delta V and delta q in World
+  Eigen::Vector3d delta_p_map = q_map * ekf_state.delta_p_;
+  Eigen::Vector3d delta_v_map = q_map * ekf_state.delta_v_;
+  Eigen::Quaterniond delta_q_map = q_map * ekf_state.delta_q_ * q_map.inverse();
+
+  // Update imu link in map/world frame
+  rot_global = (delta_q_map * q_map).normalized();
+  global_imu_pose_.pose.position.x += delta_p_map.x();
+  global_imu_pose_.pose.position.y += delta_p_map.y();
+  global_imu_pose_.pose.position.z += delta_p_map.z();
+
+  global_imu_pose_.pose.orientation.x = rot_global.x();
+  global_imu_pose_.pose.orientation.y = rot_global.y();
+  global_imu_pose_.pose.orientation.z = rot_global.z();
+  global_imu_pose_.pose.oreintation.w = rot_global.w();
+
+  // Update velocity
+  global_imu_vel_ += delta_v_map;
 }
 
-void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose,
-                             const geometry_msgs::msg::Pose &ref_pose)
+void FusionVO::setGlobalPose()
 {
-  pose = ref_pose;
-  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
-  pose.header.frame_id = base_frame_;
+  geometry_msgs::msg::Pose base_pose_map;
+  // Base frame pose in map frame
+  base_pose_map.position.x = 0.0;
+  base_pose_map.position.y = 0.0;
+  base_pose_map.position.z = 0.0;
+  base_pose_map.orientation.x = 0.0;
+  base_pose_map.orientation.y = 0.0;
+  base_pose_map.orientation.z = 0.0;
+  base_pose_map.orientation.w = 1.0;
+
+  // Convert base pose in map frame to tf2::Transform
+  tf2::Transform T_map_base;
+  tf2::fromMsg(base_pose_map, T_map_base);
+
+  // Get imu link from base link
+  try
+  {
+    tf_base_to_imu = tf_buffer.lookupTransform(base_frame_, imu_frame_,
+                                               tf2::TimePointZero); // or latest time
+    base_to_imu_ = tf_base_to_imu.transform;
+  }
+  catch(tf2::TransformException &ex)
+  {
+    RCLCPP_WARN(this->get_logger(), "Transform not available: %s", ex.what());
+  }
+
+  // Compose the transforms: T_map_imu = T_map_base * T_base_imu
+  tf2::Transform T_map_imu = T_map_base * T_base_imu;
+
+  // Convert result back to geometry_msgs::Pose
+  geometry_msgs::msg::Pose imu_pose_map = tf2::toMsg(T_map_imu);
+
+  // Set global pose
+  global_imu_pose_.pose = imu_pose_map;
+  global_imu_pose_.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  global_imu_pose_.header.frame_id = map_frame_;
+
+  // Set global vel
+  global_imu_vel_ = Eigen::Vector3d::Zero();
 }
 
-void FusionVO::setGlobalPose(geometry_msgs::msg::PoseStamped &pose,
-                             const Eigen::Vector3d &pos_vec)
+void FusionVO::setGlobalPose(const geometry_msgs::msg::Pose &ref_pose)
 {
-  pose.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
-  pose.header.frame_id = base_frame_;
-  pose.position.x = pos_vec.x();
-  pose.position.y = pos_vec.y();
-  pose.position.z = pos_vec.z();
-  pose.orientation.x = 0.0;
-  pose.orientation.y = 0.0;
-  pose.orientation.z = 0.0;
-  pose.orientation.w = 1.0;
+  geometry_msgs::msg::Pose base_pose_map;
+  // Base frame pose in map frame
+  base_pose_map.pose = ref_pose;
+
+  // Convert base pose in map frame to tf2::Transform
+  tf2::Transform T_map_base;
+  tf2::fromMsg(base_pose_map, T_map_base);
+
+  // Get imu link from base link
+  try
+  {
+    tf_base_to_imu = tf_buffer.lookupTransform(base_frame_, imu_frame_,
+                                               tf2::TimePointZero); // or latest time
+    base_to_imu_ = tf_base_to_imu.transform;
+  }
+  catch(tf2::TransformException &ex)
+  {
+    RCLCPP_WARN(this->get_logger(), "Transform not available: %s", ex.what());
+  }
+
+  // Compose the transforms: T_map_imu = T_map_base * T_base_imu
+  tf2::Transform T_map_imu = T_map_base * T_base_imu;
+
+  // Convert result back to geometry_msgs::Pose
+  geometry_msgs::msg::Pose imu_pose_map = tf2::toMsg(T_map_imu);
+
+  // Set global pose
+  global_imu_pose_.pose = imu_pose_map;
+  global_imu_pose_.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  global_imu_pose_.header.frame_id = map_frame_;
+
+  // Set global vel
+  global_imu_vel_ = Eigen::Vector3d::Zero();
+}
+
+void FusionVO::setGlobalPose(const Eigen::Vector3d &pos_vec)
+{
+  geometry_msgs::msg::Pose base_pose_map;
+
+  base_pose_map.position.x = pos_vec.x();
+  base_pose_map.position.y = pos_vec.y();
+  base_pose_map.position.z = pos_vec.z();
+  base_pose_map.orientation.x = 0.0;
+  base_pose_map.orientation.y = 0.0;
+  base_pose_map.orientation.z = 0.0;
+  base_pose_map.orientation.w = 1.0;
+
+  // Convert base pose in map frame to tf2::Transform
+  tf2::Transform T_map_base;
+  tf2::fromMsg(base_pose_map, T_map_base);
+
+  // Get imu link from base link
+  try
+  {
+    tf_base_to_imu = tf_buffer.lookupTransform(base_frame_, imu_frame_,
+                                               tf2::TimePointZero); // or latest time
+    base_to_imu_ = tf_base_to_imu.transform;
+  }
+  catch(tf2::TransformException &ex)
+  {
+    RCLCPP_WARN(this->get_logger(), "Transform not available: %s", ex.what());
+  }
+
+  // Compose the transforms: T_map_imu = T_map_base * T_base_imu
+  tf2::Transform T_map_imu = T_map_base * T_base_imu;
+
+  // Convert result back to geometry_msgs::Pose
+  geometry_msgs::msg::Pose imu_pose_map = tf2::toMsg(T_map_imu);
+
+  // Set global pose
+  global_imu_pose_.pose = imu_pose_map;
+  global_imu_pose_.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  global_imu_pose_.header.frame_id = map_frame_;
+
+  // Set global vel
+  global_imu_vel_ = Eigen::Vector3d::Zero();
 }
 
 int main(int argc, char *argv[])

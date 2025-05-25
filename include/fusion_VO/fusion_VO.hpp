@@ -97,6 +97,9 @@ private:
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   EKFState ekf_state_;
   geometry_msgs::msg::PoseStamped global_pose_;
+  geometry_msgs::msg::PoseStamped global_imu_pose_;
+  Eigen::Vector3d global_imu_vel_;
+  geometry_msgs::msg::TransformStamped tf_base_to_imu_;
 
   // Functions
   void initializeEngine(const std::string &);
