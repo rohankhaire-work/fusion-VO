@@ -4,7 +4,8 @@ namespace kalman_filter
 {
 
   update_vo(IMUPreintegrationState &imu_preint, const geometry_msgs::msg::Pose &vo_pose,
-            const Eigen::Matrix<double, 6, 6> &R_mat, Eigen::Matrix<double, 9, 9> &P_mat);
+            const Eigen::Matrix<double, 6, 6> &R_mat,
+            Eigen::Matrix<double, 16, 16> &P_mat);
   {
     IMUPreintegrationState new_imu_state;
     // Convert geometry_msgs to Eigen
@@ -51,27 +52,35 @@ namespace kalman_filter
     H.block<3, 3>(3, 12) = -preint.J_q_bg;
 
     // --- 6. Kalman Gain ---
-    Matrix<double, 6, 6> S = H * P * H.transpose() + R_mat_;
-    Matrix<double, 16, 6> K = P * H.transpose() * S.inverse();
+    Matrix<double, 6, 6> S = H * P_mat_ * H.transpose() + R_mat_;
+    Matrix<double, 16, 6> K = P_mat_ * H.transpose() * S.inverse();
 
     // --- 7. State update ---
     Matrix<double, 16, 1> dx = K * r;
 
-    new_imu_state.delta_p_ = dx.segment<3>(0);
-    new_imu_state.delta_v_ = dx.segment<3>(3);
+    // Update velocity
+    new_imu_state.delta_v_ = imu_preint.delta_v_ + dx.segment<3>(3);
 
     // Update quaternion with small-angle approximation
     Vector3d dtheta = dx.segment<3>(6);
     Quaterniond dq_upd(1, 0.5 * dtheta.x(), 0.5 * dtheta.y(), 0.5 * dtheta.z());
-    new_imu_state.delta_q_ = (dq_upd * state.delta_q).normalized();
+    new_imu_state.delta_q_ = (dq_upd * imu_preint.delta_q_).normalized();
 
-    new_imu_state.bias_accel_ = dx.segment<3>(9);
-    new_imu_state.bias_gyro_ = dx.segment<3>(12);
-    new_imu_state.scale_ = dx(15);
+    new_imu_state.bias_accel_ = imu_preint.bias_accel_ + dx.segment<3>(9);
+    new_imu_state.bias_gyro_ = imu_preint.bias_gyro_ + dx.segment<3>(12);
+    new_imu_state.scale_ = imu_preint.scale_ + dx(15);
+
+    if(robustScale(imu_preint.scale_, new_imu_state.scale_))
+    {
+      new_imu_state.delta_p_ = imu_preint.delta_p_ + dx.segment<3>(0);
+    }
+    else
+    {
+      new_imu_state.delta_p_ = imu_preint_delta_p_;
+    }
 
     // --- 8. Covariance update ---
-    Matrix<double, 16, 16> I = Matrix < doubl;
-    e, 16, 16 > ::Identity();
+    Eigen::Matrix<double, 16, 16> I = Eigen::Matrix<double, 16, 16>::Identity();
     P_mat_ = (I - K * H) * P_mat_;
 
     return new_imu_state
@@ -91,4 +100,11 @@ namespace kalman_filter
     return aa.angle() * aa.axis();
   }
 
+  // Check scale robustness
+  bool robustScale(double prev_scale, double curr_scale)
+  {
+    double relative_threshold = 0.05;
+    double scale_change_ratio = std::abs((curr_scale - prev_scale) / prev_scale);
+    return scale_change_ratio < relative_threshold;
+  }
 }

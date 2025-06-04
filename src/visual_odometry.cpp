@@ -65,7 +65,7 @@ VisualOdometry::preprocess_image(const cv::Mat &init_img, int resize_w, int resi
   return gray;
 }
 
-std::optional<std::pair<Eigen::Matrix3d, Eigen::Vector3d>>
+std::pair<Eigen::Matrix3d, Eigen::Vector3d>
 VisualOdometry::runInference(std::unique_ptr<nvinfer1::IExecutionContext> &context,
                              const cv::Mat &curr, const cv::Mat &prev)
 {
@@ -105,20 +105,15 @@ VisualOdometry::runInference(std::unique_ptr<nvinfer1::IExecutionContext> &conte
   // stream sync
   cudaStreamSynchronize(stream_);
 
-  if(success)
-  {
-    // Post process the output
-    std::vector<int64_t> final_matches;
-    std::vector<float> final_scores;
-    postprocessModelOutput(context.get(), final_matches, final_scores);
+  // Post process the output
+  std::vector<int64_t> final_matches;
+  std::vector<float> final_scores;
+  postprocessModelOutput(context.get(), final_matches, final_scores);
 
-    // Get the R and T
-    std::pair<Eigen::Matrix3d, Eigen::Vector3d> pose = estimatePose(matches);
+  // Get the R and T
+  std::pair<Eigen::Matrix3d, Eigen::Vector3d> pose = estimatePose(matches);
 
-    return pose;
-  }
-
-  return std::nullopt;
+  return pose;
 }
 
 void VisualOdometry::postprocessModelOutput(nvinfer1::IExecutionContext *context,

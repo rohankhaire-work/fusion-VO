@@ -175,7 +175,8 @@ void propagateCovariance(const IMUPreintegrationState &imu_preint,
 
 // Computes body-frame pre-integration and state transition and noise matrices
 IMUPreintegrationState
-imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
+imu_preintegration_RK4(const IMUPreintegrationState &meas_state,
+                       const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
                        Eigen::Matrix<double, 16, 16> &P_mat,
                        Eigen::Matrix<double, 12, 12> &Q_mat)
 {
@@ -184,6 +185,8 @@ imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
 
   // Initial state
   IMUPreintegrationState imu_preint;
+  imu_preint.bias_accel = meas_state.bias_accel_;
+  imu_preint.bias_gyro = meas_state.bias_gyro_;
   Eigen::Matrix<double, 16, 16> F = Eigen::Matrix<double, 16, 16>::Identity();
 
   for(size_t i = 1; i < imu_msgs.size(); ++i)

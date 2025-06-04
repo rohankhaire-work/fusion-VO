@@ -171,11 +171,11 @@ void FusionVO::timerCallback()
       = transformPoseMsg(vo_delta.first, vo_delta.second, imu_frame_, camera_frame_);
 
     // Kalman update
-    corrected_imu_state_ = kalman_filter::update_vo(ekf_state, imu_delta,
-                                                    transformed_vo_delta, P_mat_, R_mat_);
+    corrected_imu_state_
+      = kalman_filter::update_vo(imu_delta, transformed_vo_delta, P_mat_, R_mat_);
 
     // Convert to World Frame
-    convertToWorldFrame(ekf_state);
+    convertToWorldFrame(corrected_imu_state_);
 
     // Publish TF Frame and odometry msg
     publishTFFrameAndOdometry(odom_pub_, global_imu_pose_);
@@ -263,8 +263,8 @@ void FusionVO::setP(bool absolute_coords)
 void FusionVO::setQ()
 {
   // IMU noise parameters
-  double sigma_a = 0.1;      // Accelerometer noise (m/s²)
-  double sigma_omega = 0.01; // Gyroscope noise (rad/s)
+  double sigma_a = 0.1;
+  double sigma_omega = 0.01;
   double sigma_acc_bias = 1e-4;
   double sigma_gyro_bias = 1e-5;
 
@@ -283,20 +283,15 @@ void FusionVO::setQ()
 
 void FusionVO::setR()
 {
-  // VO noise parameters (adjust based on your VO accuracy)
-  double sigma_p = 0.1;       // Translation noise (meters)
-  double sigma_theta = 0.015; // Rotation noise (radians)
+  // VO noise parameters
+  double sigma_p = 0.1;
+  double sigma_theta = 0.015;
 
   // Set translation noise
   R_vo_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * (sigma_p * sigma_p);
 
   // Set rotation noise
   R_vo_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_theta * sigma_theta);
-}
-
-void FusionVO::publishOdometry(const rclcpp::Publisher &odom_pub, const EKFState &state)
-{
-  // --- Publish Odometry Message ---
 }
 
 geometry_msgs::msg::Pose
