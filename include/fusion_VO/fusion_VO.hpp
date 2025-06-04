@@ -60,7 +60,7 @@ private:
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &);
   void IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &);
   void GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &);
-  void RVIZCallback(const geoemtry_msgs::msg::PoseStamped::ConstSharedPtr &);
+  void RVIZCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr &);
   void timerCallback();
 
   // Tensorrt
@@ -73,7 +73,7 @@ private:
   std::string imu_topic_;
   std::string gps_topic_;
   std::string weight_file_;
-  std::String imu_frame_, camera_frame_, base_frame_, map_frame_;
+  std::string imu_frame_, camera_frame_, base_frame_, map_frame_;
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
   double fx_, fy_, cx_, cy_;
@@ -96,7 +96,7 @@ private:
   Eigen::Matrix<double, 6, 6> R_mat_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
-  IMUPreintegrationState corrected_imu_state_;
+  EKFState ekf_state_;
   geometry_msgs::msg::PoseStamped global_imu_pose_;
   Eigen::Vector3d global_imu_vel_;
   geometry_msgs::msg::TransformStamped tf_base_to_imu_;

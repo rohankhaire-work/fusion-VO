@@ -1,5 +1,4 @@
 #include "fusion_VO/fusion_VO.hpp"
-#include <istream>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -162,8 +161,8 @@ void FusionVO::timerCallback()
                                                           last_image_time_, curr_time_);
     // Get IMU Preintegration using RK4
     // Coviariance propagation occurs in this step (kalman predict)
-    auto imu_delta = imu_measurement::imu_integration_RK4(corrected_imu_state_,
-                                                          required_imu_, P_mat_, Q_mat_);
+    auto imu_delta
+      = imu_measurement::imu_integration_RK4(ekf_state_, required_imu_, P_mat_, Q_mat_);
     auto vo_delta = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
 
     // Convert vo_delta to imu body frame

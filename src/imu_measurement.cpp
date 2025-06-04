@@ -43,7 +43,8 @@ namespace imu_measurement
   quaternion_derivative(const Eigen::Quaterniond &q, const Eigen::Vector3d &omega)
   {
     Eigen::Quaterniond omega_quat(0, omega.x(), omega.y(), omega.z());
-    return 0.5 * q * omega_quat;
+    Eigen::Quaterniond q_dot = Eigen::Quaterniond((q * omega_quat).coeffs() * 0.5);
+    return q_dot;
   }
 
   // PERFROM BODY-FRAME IMU PRE-INTEGRATION USING RK4
@@ -52,56 +53,56 @@ namespace imu_measurement
                       const Eigen::Vector3d &gyro, double dt)
   {
     // Unbiased measurements
-    Vector3d acc_unbias = accel - preint.bias_accel;
-    Vector3d gyro_unbias = gyro - preint.bias_gyro;
+    Eigen::Vector3d acc_unbias = accel - preint.bias_accel_;
+    Eigen::Vector3d gyro_unbias = gyro - preint.bias_gyro_;
 
     // Step 1 (k1)
-    Eigen::Quaterniond k1_q = quaternion_derivative(preint.orientation, gyro_unbias);
-    Eigen::Vector3d k1_v = preint.orientation * acc_unbias;
-    Eigen::Vector3d k1_p = preint.velocity;
+    Eigen::Quaterniond k1_q = quaternion_derivative(preint.delta_q_, gyro_unbias);
+    Eigen::Vector3d k1_v = preint.delta_q_ * acc_unbias;
+    Eigen::Vector3d k1_p = preint.delta_v_;
 
     // Step 2 (k2)
-    Eigen::Quaterniond q2 = state.orientation
+    Eigen::Quaterniond q2 = preint.delta_q_
                             * Eigen::Quaterniond(1, 0.5 * k1_q.x() * dt,
                                                  0.5 * k1_q.y() * dt, 0.5 * k1_q.z() * dt)
                                 .normalized();
-    Eigen::Vector3d v2 = preint.velocity + 0.5 * dt * k1_v;
+    Eigen::Vector3d v2 = preint.delta_v_ + 0.5 * dt * k1_v;
     Eigen::Quaterniond k2_q = quaternion_derivative(q2, gyro_unbias);
-    Eigen::Vector3d k2_v = q2 * preint.bias_accel;
+    Eigen::Vector3d k2_v = q2 * preint.bias_accel_;
     Eigen::Vector3d k2_p = v2;
 
     // Step 3 (k3)
-    Eigen::Quaterniond q3 = state.orientation
+    Eigen::Quaterniond q3 = preint.delta_q_
                             * Eigen::Quaterniond(1, 0.5 * k2_q.x() * dt,
                                                  0.5 * k2_q.y() * dt, 0.5 * k2_q.z() * dt)
                                 .normalized();
-    Eigen::Vector3d v3 = preint.velocity + 0.5 * dt * k2_v;
+    Eigen::Vector3d v3 = preint.delta_v_ + 0.5 * dt * k2_v;
     Eigen::Quaterniond k3_q = quaternion_derivative(q3, gyro_unbias);
-    Eigen::Vector3d k3_v = q3 * preint.bias_accel;
+    Eigen::Vector3d k3_v = q3 * preint.bias_accel_;
     Eigen::Vector3d k3_p = v3;
 
     // Step 4 (k4)
     Eigen::Quaterniond q4
-      = state.orientation
+      = preint.delta_q_
         * Eigen::Quaterniond(1, k3_q.x() * dt, k3_q.y() * dt, k3_q.z() * dt).normalized();
-    Eigen::Vector3d v4 = preint.velocity + dt * k3_v;
+    Eigen::Vector3d v4 = preint.delta_v_ + dt * k3_v;
     Eigen::Quaterniond k4_q = quaternion_derivative(q4, gyro_unbias);
-    Eigen::Vector3d k4_v = q4 * preint.bias_accel;
+    Eigen::Vector3d k4_v = q4 * preint.bias_accel_;
     Eigen::Vector3d k4_p = v4;
 
     // Compute final integrated values
     IMUPreintegrationState new_state;
-    new_state.orientation
-      = state.orientation
+    new_state.delta_q_
+      = preint.delta_q_
         * Eigen::Quaterniond(
             1, (k1_q.x() + 2 * k2_q.x() + 2 * k3_q.x() + k4_q.x()) * dt / 6.0,
             (k1_q.y() + 2 * k2_q.y() + 2 * k3_q.y() + k4_q.y()) * dt / 6.0,
             (k1_q.z() + 2 * k2_q.z() + 2 * k3_q.z() + k4_q.z()) * dt / 6.0)
             .normalized();
 
-    new_state.velocity = state.velocity + dt * (k1_v + 2 * k2_v + 2 * k3_v + k4_v) / 6.0;
-    new_state.position = state.position + dt * (k1_p + 2 * k2_p + 2 * k3_p + k4_p) / 6.0;
-    new_state.dt = dt;
+    new_state.delta_v_ = preint.delta_v_ + dt * (k1_v + 2 * k2_v + 2 * k3_v + k4_v) / 6.0;
+    new_state.delta_p_ = preint.delta_p_ + dt * (k1_p + 2 * k2_p + 2 * k3_p + k4_p) / 6.0;
+    new_state.dt_ = dt;
 
     return new_state;
   }
@@ -112,25 +113,25 @@ namespace imu_measurement
                                       const Eigen::Vector3d &gyro,
                                       Eigen::Matrix<double, 16, 16> &F)
   {
-    auto a_unbiased = accel - preint.bias_accel;
-    auto w_unbiased = gyro - preint.bias_gyro;
+    auto a_unbiased = accel - pre_int.bias_accel_;
+    auto w_unbiased = gyro - pre_int.bias_gyro_;
 
     Eigen::Matrix<double, 16, 16> A = Eigen::Matrix<double, 16, 16>::Zero();
 
     // Position wrt velocity (body frame)
-    A.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * dt; // ∂Δp/∂v = I·Δt
+    A.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * pre_int.dt_; // ∂Δp/∂v = I·Δt
 
     // Velocity wrt orientation (body frame, uses pre-integrated a_unbiased)
-    A.block<3, 3>(3, 6) = -skewSymmetric(a_unbiased) * dt; // ∂Δv/∂θ = -[a]×·Δt
+    A.block<3, 3>(3, 6) = -skewSymmetric(a_unbiased) * pre_int.dt_; // ∂Δv/∂θ = -[a]×·Δt
 
     // Velocity wrt accel bias (body frame)
-    A.block<3, 3>(3, 9) = -Eigen::Matrix3d::Identity() * dt; // ∂Δv/∂b_a = -I·Δt
+    A.block<3, 3>(3, 9) = -Eigen::Matrix3d::Identity() * pre_int.dt_; // ∂Δv/∂b_a = -I·Δt
 
     // Orientation wrt angular velocity (body frame)
-    A.block<3, 3>(6, 6) = -skewSymmetric(w_unbiased) * dt; // ∂Δq/∂θ = -[w]×·Δt
+    A.block<3, 3>(6, 6) = -skewSymmetric(w_unbiased) * pre_int.dt_; // ∂Δq/∂θ = -[w]×·Δt
 
     // Orientation wrt gyro bias (body frame)
-    A.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity() * dt; // ∂Δq/∂b_g = -I·Δt
+    A.block<3, 3>(6, 12) = -Eigen::Matrix3d::Identity() * pre_int.dt_; // ∂Δq/∂b_g = -I·Δt
 
     // Biases (random walk)
     A.block<3, 3>(9, 9) = Eigen::Matrix3d::Zero();   // accel bias
@@ -140,9 +141,9 @@ namespace imu_measurement
     Eigen::Matrix<double, 16, 16> Phi = (I16 + A);
 
     // Update imu_preint biases
-    pre_int.J_v_ba += -Matrix3d::Identity() * dt;
-    pre_int.J_p_ba += preint.J_v_ba * dt;
-    pre_int.J_q_bg += -Matrix3d::Identity() * dt;
+    pre_int.J_v_ba_ += -Eigen::Matrix3d::Identity() * pre_int.dt_;
+    pre_int.J_p_ba_ += preint.J_v_ba_ * pre_int.dt_;
+    pre_int.J_q_bg_ += -Eigen::Matrix3d::Identity() * pre_int.dt_;
 
     F = Phi * F;
   }
