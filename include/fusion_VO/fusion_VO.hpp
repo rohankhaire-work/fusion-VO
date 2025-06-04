@@ -2,14 +2,13 @@
 #define FUSION_VO__FUSION_VO_HPP_
 
 #include "fusion_VO/visual_odometry.hpp"
-#include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/gps_measurement.hpp"
+#include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/kalman_filter.hpp"
-#include "imu_measurement.hpp"
-#include "kalman_filter.hpp"
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <image_transport/image_transport.hpp>
 
 #include <rclcpp/rclcpp.hpp>
@@ -17,7 +16,9 @@
 #include <sensor_msgs/msg/image.h>
 #include <sensor_msgs/msg/imu.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <tf2/LinearMath/Transform.hpp>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -50,6 +51,7 @@ private:
   image_transport::Subscriber img_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr rviz_pose_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // Publishers
@@ -99,7 +101,7 @@ private:
   EKFState ekf_state_;
   geometry_msgs::msg::PoseStamped global_imu_pose_;
   Eigen::Vector3d global_imu_vel_;
-  geometry_msgs::msg::TransformStamped tf_base_to_imu_;
+  tf2::Transform base_to_imu_;
 
   // Functions
   void initializeEngine(const std::string &);
@@ -109,10 +111,16 @@ private:
   geometry_msgs::msg::Pose transformPoseMsg(const geometry_msgs::msg::Pose &,
                                             const std::string &, const std::string &);
 
-  void publishTFFrameAndOdometry(const rclcpp::Publisher &, const EKFState &);
+  void
+  publishTFFrameAndOdometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &,
+                            const geometry_msgs::msg::PoseStamped &);
+  void convertToWorldFrame(const EKFState &);
+  void setGlobalPose();
+  void setGlobalPose(const geometry_msgs::msg::PoseStamped &);
+  void setGlobalPose(const Eigen::Vector3d &);
   void setP(bool);
   void setQ();
-  void setR_vo();
+  void setR();
 };
 
 #endif // FUSION_VO__FUSION_VO_HPP_

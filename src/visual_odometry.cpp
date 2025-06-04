@@ -1,5 +1,4 @@
 #include "fusion_VO/visual_odometry.hpp"
-#include <cstdint>
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
                                double score_thresh)
