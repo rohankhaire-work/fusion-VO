@@ -17,10 +17,13 @@ struct IMUPreintegrationState
   Eigen::Vector3d bias_accel_; // ba
   double scale_;               // Scale as state
   double dt_;                  // delta_t
+  Eigen::Matrix3d J_p_ba_, J_v_ba, J_q_bg_;
 
   IMUPreintegrationState()
       : delta_p_(Eigen::Vector3d::Zero()), delta_v_(Eigen::Vector3d::Zero()),
-        delta_q_(Eigen::Quaterniond::Identity(), scale_(1.0))
+        delta_q_(Eigen::Quaterniond::Identity()), bias_accel_(Eigen::Vector3d::Zero()),
+        bias_gyro(Eigen::Vector3d::Zero()), scale_(1.0), J_p_ba_(Eigen::Matrix3d::Zero()),
+        J_v_ba_(Eigen::Matrix3d::Zero()), J_q_bg_(Eigen::Matrix3d::Zero())
   {}
 };
 
@@ -41,16 +44,16 @@ namespace imu_measurement
 
   void computeStateTransitionJacobian(const IMUPreintegrationState &,
                                       const Eigen::Vector3d &, const Eigen::Vector3d &,
-                                      Eigen::Matrix<double, 15, 15> &);
+                                      Eigen::Matrix<double, 16, 16> &);
 
   void
-  propagateCovariance(const IMUPreintegrationState &, Eigen::Matrix<double, 15, 15> &,
+  propagateCovariance(const IMUPreintegrationState &, Eigen::Matrix<double, 16, 16> &,
                       const Eigen::Matrix<double, 12, 12> &,
-                      const Eigen::Matrx<double, 15, 15> &);
+                      const Eigen::Matrx<double, 16, 16> &);
 
   IMUPreintegrationState
   imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &,
-                         Eigen::Matrix<double, 15, 15> &,
+                         Eigen::Matrix<double, 16, 16> &,
                          Eigen::Matrix<double, 12, 12> &);
 }
 

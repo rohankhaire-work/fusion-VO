@@ -101,6 +101,7 @@ namespace imu_measurement
 
     new_state.velocity = state.velocity + dt * (k1_v + 2 * k2_v + 2 * k3_v + k4_v) / 6.0;
     new_state.position = state.position + dt * (k1_p + 2 * k2_p + 2 * k3_p + k4_p) / 6.0;
+    new_state.dt = dt;
 
     return new_state;
   }
@@ -135,8 +136,13 @@ namespace imu_measurement
     A.block<3, 3>(9, 9) = Eigen::Matrix3d::Zero();   // accel bias
     A.block<3, 3>(12, 12) = Eigen::Matrix3d::Zero(); // gyro bias
 
-    Eigen::Matrix<double, 16, 16> I15 = Eigen::Matrix<double, 16, 16>::Identity();
-    Eigen::Matrix<double, 16, 16> Phi = (I15 + A);
+    Eigen::Matrix<double, 16, 16> I16 = Eigen::Matrix<double, 16, 16>::Identity();
+    Eigen::Matrix<double, 16, 16> Phi = (I16 + A);
+
+    // Update imu_preint biases
+    pre_int.J_v_ba += -Matrix3d::Identity() * dt;
+    pre_int.J_p_ba += preint.J_v_ba * dt;
+    pre_int.J_q_bg += -Matrix3d::Identity() * dt;
 
     F = Phi * F;
   }
@@ -148,7 +154,7 @@ void propagateCovariance(const IMUPreintegrationState &imu_preint,
                          const Eigen::Matrx<double, 16, 16> &F_mat)
 {
   // --- Noise Jacobian (G)  const ---
-  Eigen::Matrix<double, 16, 12> G_mat = Eigen::Matrix<double, 15, 12>::Zero();
+  Eigen::Matrix<double, 16, 12> G_mat = Eigen::Matrix<double, 16, 12>::Zero();
 
   // Accelerometer noise → velocity (body frame)
   G.block<3, 3>(3, 0) = Matrix3d::Identity() * imu_preint.dt; // ∂Δv/∂η_a
@@ -170,7 +176,7 @@ void propagateCovariance(const IMUPreintegrationState &imu_preint,
 // Computes body-frame pre-integration and state transition and noise matrices
 IMUPreintegrationState
 imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
-                       Eigen::Matrix<double, 15, 15> &P_mat,
+                       Eigen::Matrix<double, 16, 16> &P_mat,
                        Eigen::Matrix<double, 12, 12> &Q_mat)
 {
   if(imu_msgs.size() < 2)
@@ -202,9 +208,9 @@ imu_preintegration_RK4(const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
     computeStateTransitionJacobian(imu_preint, accel, gyro, F);
 
     // EKF step - propogate covariance
-    propagateCovariance(imu_state, P_mat, Q_mat, F);
+    propagateCovariance(imu_preint, P_mat, Q_mat, F);
   }
 }
 
-return imu_state;
+return imu_preint;
 }

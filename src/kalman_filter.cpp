@@ -6,6 +6,7 @@ namespace kalman_filter
   update_vo(IMUPreintegrationState &imu_preint, const geometry_msgs::msg::Pose &vo_pose,
             const Eigen::Matrix<double, 6, 6> &R_mat, Eigen::Matrix<double, 9, 9> &P_mat);
   {
+    IMUPreintegrationState new_imu_state;
     // Convert geometry_msgs to Eigen
     Quaterniond q_vo;
     Vector3d t_vo;
@@ -45,6 +46,10 @@ namespace kalman_filter
     // Rotation: ∂(log(q_vo * q⁻¹)) / ∂q ≈ Identity (small angle)
     H.block<3, 3>(3, 6) = Matrix3d::Identity(); // linearized log map
 
+    // Accel and gyro biases
+    H.block<3, 3>(0, 9) = -preint.J_p_ba;
+    H.block<3, 3>(3, 12) = -preint.J_q_bg;
+
     // --- 6. Kalman Gain ---
     Matrix<double, 6, 6> S = H * P * H.transpose() + R_mat_;
     Matrix<double, 16, 6> K = P * H.transpose() * S.inverse();
@@ -52,21 +57,24 @@ namespace kalman_filter
     // --- 7. State update ---
     Matrix<double, 16, 1> dx = K * r;
 
-    imu_preint.delta_p_ += dx.segment<3>(0);
-    imu_preint.delta_v_ += dx.segment<3>(3);
+    new_imu_state.delta_p_ = dx.segment<3>(0);
+    new_imu_state.delta_v_ = dx.segment<3>(3);
 
     // Update quaternion with small-angle approximation
     Vector3d dtheta = dx.segment<3>(6);
     Quaterniond dq_upd(1, 0.5 * dtheta.x(), 0.5 * dtheta.y(), 0.5 * dtheta.z());
-    imu_preint.delta_q_ = (dq_upd * state.delta_q).normalized();
+    new_imu_state.delta_q_ = (dq_upd * state.delta_q).normalized();
 
-    imu_preint.bias_accel_ += dx.segment<3>(9);
-    imu_preint.bias_gyro_ += dx.segment<3>(12);
-    imu_preint.scale_ += dx(15);
+    new_imu_state.bias_accel_ = dx.segment<3>(9);
+    new_imu_state.bias_gyro_ = dx.segment<3>(12);
+    new_imu_state.scale_ = dx(15);
 
     // --- 8. Covariance update ---
-    Matrix<double, 16, 16> I = Matrix<double, 16, 16>::Identity();
+    Matrix<double, 16, 16> I = Matrix < doubl;
+    e, 16, 16 > ::Identity();
     P_mat_ = (I - K * H) * P_mat_;
+
+    return new_imu_state
   }
 
   Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v)

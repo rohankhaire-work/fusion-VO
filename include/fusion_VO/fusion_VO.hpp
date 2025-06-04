@@ -5,6 +5,7 @@
 #include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/gps_measurement.hpp"
 #include "fusion_VO/kalman_filter.hpp"
+#include "imu_measurement.hpp"
 #include "kalman_filter.hpp"
 
 #include <NvInfer.h>
@@ -95,8 +96,7 @@ private:
   Eigen::Matrix<double, 6, 6> R_mat_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
-  EKFState ekf_state_;
-  geometry_msgs::msg::PoseStamped global_pose_;
+  IMUPreintegrationState corrected_imu_state_;
   geometry_msgs::msg::PoseStamped global_imu_pose_;
   Eigen::Vector3d global_imu_vel_;
   geometry_msgs::msg::TransformStamped tf_base_to_imu_;
@@ -109,7 +109,7 @@ private:
   geometry_msgs::msg::Pose transformPoseMsg(const geometry_msgs::msg::Pose &,
                                             const std::string &, const std::string &);
 
-  void publishFrameAndOdometry(const rclcpp::Publisher &, const EKFState &);
+  void publishTFFrameAndOdometry(const rclcpp::Publisher &, const EKFState &);
   void setP(bool);
   void setQ();
   void setR_vo();
