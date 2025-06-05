@@ -15,7 +15,7 @@ namespace imu_measurement
   collect_imu_readings(const std::deque<sensor_msgs::msg::Imu> &, const rclcpp::Time &,
                        const rclcpp::Time &);
 
-  void trim_imu_buffer(const std::deque<sensor_msgs::msg::Imu> &, const rclcpp::Time &);
+  void trim_imu_buffer(std::deque<sensor_msgs::msg::Imu> &, const rclcpp::Time &);
 
   Eigen::Quaterniond
   quaternion_derivative(const Eigen::Quaterniond &, const Eigen::Vector3d &);

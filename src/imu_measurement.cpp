@@ -1,9 +1,10 @@
 #include "fusion_VO/imu_measurement.hpp"
+#include "fusion_VO/data_struct.hpp"
 
 namespace imu_measurement
 {
   std::vector<sensor_msgs::msg::Imu>
-  collect_imu_readings(std::deque<sensor_msgs::msg::Imu> &imu_buffer,
+  collect_imu_readings(const std::deque<sensor_msgs::msg::Imu> &imu_buffer,
                        const rclcpp::Time &curr_time, const rclcpp::Time &last_time)
   {
     std::vector<sensor_msgs::msg::Imu> selected_imu_data;
@@ -175,7 +176,7 @@ namespace imu_measurement
 
   // Computes body-frame pre-integration and state transition and noise matrices
   IMUPreintegrationState
-  imu_preintegration_RK4(const IMUPreintegrationState &meas_state,
+  imu_preintegration_RK4(const EKFState &meas_state,
                          const std::vector<sensor_msgs::msg::Imu> &imu_msgs,
                          Eigen::Matrix<double, 16, 16> &P_mat,
                          Eigen::Matrix<double, 12, 12> &Q_mat)

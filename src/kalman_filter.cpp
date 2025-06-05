@@ -6,10 +6,10 @@
 namespace kalman_filter
 {
 
-  EKFState
-  update_vo(IMUPreintegrationState &imu_preint, const geometry_msgs::msg::Pose &vo_pose,
-            const Eigen::Matrix<double, 6, 6> &R_mat,
-            Eigen::Matrix<double, 16, 16> &P_mat)
+  EKFState update_vo(const IMUPreintegrationState &imu_preint,
+                     const geometry_msgs::msg::Pose &vo_pose,
+                     const Eigen::Matrix<double, 6, 6> &R_mat,
+                     Eigen::Matrix<double, 16, 16> &P_mat)
   {
     EKFState new_imu_state;
     // Convert geometry_msgs to Eigen

@@ -172,7 +172,7 @@ void FusionVO::timerCallback()
 
     // Kalman update
     ekf_state_
-      = kalman_filter::update_vo(imu_delta, transformed_vo_delta, P_mat_, R_mat_);
+      = kalman_filter::update_vo(imu_delta, transformed_vo_delta, R_mat_, P_mat_);
 
     // Convert to World Frame
     convertToWorldFrame(ekf_state_);
@@ -417,8 +417,7 @@ void FusionVO::setGlobalPose()
   tf2::Transform T_map_imu = T_map_base * base_to_imu_;
 
   // Convert result back to geometry_msgs::Pose
-  geometry_msgs::msg::Pose imu_pose_map;
-  tf2::toMsg(T_map_imu, imu_pose_map);
+  geometry_msgs::msg::Pose imu_pose_map = tf2TransformToPoseMsg(T_map_imu);
 
   // Set global pose
   global_imu_pose_.pose = imu_pose_map;
@@ -456,8 +455,7 @@ void FusionVO::setGlobalPose(const geometry_msgs::msg::PoseStamped &ref_pose)
   tf2::Transform T_map_imu = T_map_base * base_to_imu_;
 
   // Convert result back to geometry_msgs::Pose
-  geometry_msgs::msg::Pose imu_pose_map;
-  tf2::toMsg(T_map_imu, imu_pose_map);
+  geometry_msgs::msg::Pose imu_pose_map = tf2TransformToPoseMsg(T_map_imu);
 
   // Set global pose
   global_imu_pose_.pose = imu_pose_map;
@@ -501,8 +499,7 @@ void FusionVO::setGlobalPose(const Eigen::Vector3d &pos_vec)
   tf2::Transform T_map_imu = T_map_base * base_to_imu_;
 
   // Convert result back to geometry_msgs::Pose
-  geometry_msgs::msg::Pose imu_pose_map;
-  tf2::toMsg(T_map_imu, imu_pose_map);
+  geometry_msgs::msg::Pose imu_pose_map = tf2TransformToPoseMsg(T_map_imu);
 
   // Set global pose
   global_imu_pose_.pose = imu_pose_map;
@@ -522,8 +519,7 @@ void FusionVO::publishTFFrameAndOdometry(
   tf2::Quaternion q = base_to_imu_.getRotation().inverse();
   Eigen::Quaterniond q_eigen(q.w(), q.x(), q.y(), q.z());
 
-  tf2::Transform pose_tf;
-  tf2::fromMsg(imu_pose, pose_tf);
+  tf2::Transform pose_tf = poseMsgToTF2Transform(imu_pose.pose);
 
   // Apply transform
   tf2::Transform pose_in_base = pose_tf * tf_imu_to_base;
@@ -535,8 +531,7 @@ void FusionVO::publishTFFrameAndOdometry(
   tf_msg.transform = tf2::toMsg(pose_in_base);
 
   // convert geometry_msgs Pose
-  geometry_msgs::msg::Pose pose_out;
-  tf2::toMsg(pose_in_base, pose_out);
+  geometry_msgs::msg::Pose pose_out = tf2TransformToPoseMsg(pose_in_base);
 
   // Publihs odometry
   nav_msgs::msg::Odometry odom_msg;
@@ -555,6 +550,31 @@ void FusionVO::publishTFFrameAndOdometry(
 
   // Publish base_link
   tf_broadcaster_->sendTransform(tf_msg);
+}
+
+geometry_msgs::msg::Pose FusionVO::tf2TransformToPoseMsg(const tf2::Transform &tf)
+{
+  geometry_msgs::msg::Pose pose_msg;
+  pose_msg.position.x = tf.getOrigin().x();
+  pose_msg.position.y = tf.getOrigin().y();
+  pose_msg.position.z = tf.getOrigin().z();
+
+  pose_msg.orientation.x = tf.getRotation().x();
+  pose_msg.orientation.y = tf.getRotation().y();
+  pose_msg.orientation.z = tf.getRotation().z();
+  pose_msg.orientation.w = tf.getRotation().w();
+
+  return pose_msg;
+}
+
+tf2::Transform FusionVO::poseMsgToTF2Transform(const geometry_msgs::msg::Pose &pose_msg)
+{
+  tf2::Vector3 translation(pose_msg.position.x, pose_msg.position.y, pose_msg.position.z);
+
+  tf2::Quaternion rotation(pose_msg.orientation.x, pose_msg.orientation.y,
+                           pose_msg.orientation.z, pose_msg.orientation.w);
+
+  return tf2::Transform(rotation, translation);
 }
 
 int main(int argc, char *argv[])

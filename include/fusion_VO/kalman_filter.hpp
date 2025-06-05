@@ -8,7 +8,7 @@ namespace kalman_filter
 {
   EKFState
   update_vo(const IMUPreintegrationState &, const geometry_msgs::msg::Pose &,
-            const Eigen::Matrix<double, 16, 16> &, Eigen::Matrix<double, 6, 6> &);
+            const Eigen::Matrix<double, 6, 6> &, Eigen::Matrix<double, 16, 16> &);
 
   Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
 
