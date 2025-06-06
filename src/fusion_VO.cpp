@@ -132,37 +132,39 @@ void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 {
   imu_buffer_.emplace_back(*msg);
 
-  // Trim the buffer every new VO update
-  if(new_vo_ && last_image_time_.seconds())
-  {
-    imu_measurement::trim_imu_buffer(imu_buffer_, last_image_time_);
-  }
+  if(imu_buffer_.size() > MAX_IMU_BUFFER_SIZE)
+    imu_buffer_.clear();
 }
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() && required_imu_.empty() && !init_pose_available_)
+  if(init_image_.empty() || required_imu_.empty() || !init_pose_available_)
   {
     RCLCPP_WARN(this->get_logger(),
-                "Image or IMU or Initial pose data are not available in FusionVO");
+                "Image or IMU or Initial pose data is not available in FusionVO");
     return;
   }
-  // Initialize EKF state
-  EKFState ekf_state = EKFState();
 
   // Assign curr frame
   curr_frame_ = init_image_;
 
   if(!curr_frame_.empty() && !prev_frame_.empty() && new_vo_)
   {
-    // Work on copy of buffer
-    auto imu_buffer_copy = imu_buffer_;
-    required_imu_ = imu_measurement::collect_imu_readings(imu_buffer_copy,
-                                                          last_image_time_, curr_time_);
+    RCLCPP_WARN(this->get_logger(), "LOOP HAS STARTED");
+
+    // Trim the buffer every new VO update
+    imu_measurement::trim_imu_buffer(imu_buffer_, last_image_time_);
+
+    // Collect imu readings between image frames
+    required_imu_
+      = imu_measurement::collect_imu_readings(imu_buffer_, last_image_time_, curr_time_);
+
     // Get IMU Preintegration using RK4
     // Coviariance propagation occurs in this step (kalman predict)
+    RCLCPP_WARN(this->get_logger(), "Perfroming PRE-INTEGRATION");
     auto imu_delta = imu_measurement::imu_preintegration_RK4(ekf_state_, required_imu_,
                                                              P_mat_, Q_mat_);
+    RCLCPP_WARN(this->get_logger(), "Performing INFERENCE");
     auto vo_delta = visual_odometry_->runInference(curr_frame_, prev_frame_);
 
     // Convert vo_delta to imu body frame

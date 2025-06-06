@@ -87,6 +87,7 @@ private:
   geometry_msgs::msg::PoseStamped global_imu_pose_;
   Eigen::Vector3d global_imu_vel_;
   tf2::Transform base_to_imu_;
+  const size_t MAX_IMU_BUFFER_SIZE = 25;
 
   // Functions
   void initializeEngine(const std::string &);

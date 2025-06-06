@@ -13,11 +13,11 @@ namespace imu_measurement
     {
       rclcpp::Time imu_time(it->header.stamp);
 
-      if(imu_time > last_time && imu_time < curr_time)
+      if(imu_time >= last_time && imu_time <= curr_time)
       {
         selected_imu_data.push_back(*it);
-        it++;
       }
+      ++it;
     }
 
     return selected_imu_data;
@@ -30,11 +30,13 @@ namespace imu_measurement
     while(it != imu_buffer.end())
     {
       rclcpp::Time imu_time(it->header.stamp);
+      // Return if there's nothing to erase
+      if(imu_time >= curr_time)
+        return;
 
       if(imu_time < curr_time)
       {
-        imu_buffer.erase(it);
-        it++;
+        it = imu_buffer.erase(it);
       }
     }
   }
