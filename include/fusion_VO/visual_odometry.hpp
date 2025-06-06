@@ -9,24 +9,39 @@
 
 #include <cstdint>
 #include <vector>
-#include <optional>
+#include <fstream>
+
+// Custom TensorRT Logger
+class Logger : public nvinfer1::ILogger
+{
+public:
+  void log(Severity severity, const char *msg) noexcept override
+  {
+    if(severity == Severity::kINFO)
+      return; // Ignore INFO logs
+    std::cerr << "[TensorRT] " << msg << std::endl;
+  }
+};
 
 class VisualOdometry // Copy data to device vector
 {
 public:
-  VisualOdometry(int, int, int, double);
+  VisualOdometry(int, int, int, double, const std::string &);
   ~VisualOdometry();
   void setIntrinsicMat(double, double, double, double);
   std::pair<Eigen::Matrix3d, Eigen::Vector3d>
-  runInference(std::unique_ptr<nvinfer1::IExecutionContext> &, const cv::Mat &,
-               const cv::Mat &);
+  runInference(const cv::Mat &, const cv::Mat &);
   cv::Mat K_;
 
 private:
   int resize_w_, resize_h_, max_matches_;
   double score_threshold_;
+  Logger gLogger;
 
-  // CUDA stream
+  // Tensorrt
+  std::unique_ptr<nvinfer1::IRuntime> runtime;
+  std::unique_ptr<nvinfer1::ICudaEngine> engine;
+  std::unique_ptr<nvinfer1::IExecutionContext> context;
   cudaStream_t stream_;
 
   // Persistent device vectors (allocated once)
@@ -41,7 +56,8 @@ private:
   // Functions
   void allocateBuffers();
   cv::Mat preprocess_image(const cv::Mat &, int, int);
-  std::vector<float> convertToTensor(const cv::Mat &curr, const cv::Mat &prev);
+  std::vector<float> convertToTensor(const cv::Mat &, const cv::Mat &);
+  void initializeEngine(const std::string &);
 
   void postprocessModelOutput(nvinfer1::IExecutionContext *, std::vector<int> &,
                               std::vector<float> &);

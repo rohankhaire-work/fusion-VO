@@ -38,7 +38,7 @@ install(TARGETS fusion_vo
   DESTINATION lib/${PROJECT_NAME})
 
 install(
-  DIRECTORY config weights
+  DIRECTORY config weights launch
   DESTINATION share/${PROJECT_NAME}
 )
 

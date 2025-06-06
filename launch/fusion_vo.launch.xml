@@ -1,0 +1,13 @@
+<launch>
+   <!-- Sim Time should be true for simulation -->
+    <arg default="true" description="use_sim_time" name="use_sim_time"></arg>
+
+    <!-- Declare parameter file path -->
+    <arg name="param_file" default="$(find-pkg-share fusion_vo)/config/fusion_vo_cfg.yaml"/>
+
+    <!-- Launch the GridVision Node with parameters -->
+    <node pkg="fusion_vo" exec="fusion_vo" name="fusion_vo_node" output="screen">
+        <param name="use_sim_time" type="bool" value="$(var use_sim_time)"/>
+        <param from="$(var param_file)" />
+      </node>
+</launch>

@@ -1,12 +1,15 @@
 #include "fusion_VO/visual_odometry.hpp"
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
-                               double score_thresh)
+                               double score_thresh, const std::string &weight_file)
 {
   resize_w_ = resize_w;
   resize_h_ = resize_h;
   max_matches_ = num_keypoints;
   score_threshold_ = score_thresh;
+
+  // Set up TRT
+  initializeEngine(weight_file);
 
   // allocate memory for inputs and outputs
   allocateBuffers();
@@ -64,9 +67,32 @@ VisualOdometry::preprocess_image(const cv::Mat &init_img, int resize_w, int resi
   return gray;
 }
 
+void VisualOdometry::initializeEngine(const std::string &engine_path)
+{
+  // Load TensorRT engine from file
+  std::ifstream file(engine_path, std::ios::binary);
+  if(!file)
+  {
+    throw std::runtime_error("Failed to open engine file: " + engine_path);
+  }
+  file.seekg(0, std::ios::end);
+  size_t size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  std::vector<char> engine_data(size);
+  file.read(engine_data.data(), size);
+
+  // Create runtime and deserialize engine
+  // Create TensorRT Runtime
+  runtime.reset(nvinfer1::createInferRuntime(gLogger));
+
+  // Deserialize engine
+  engine.reset(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
+  context.reset(engine->createExecutionContext());
+}
+
 std::pair<Eigen::Matrix3d, Eigen::Vector3d>
-VisualOdometry::runInference(std::unique_ptr<nvinfer1::IExecutionContext> &context,
-                             const cv::Mat &curr, const cv::Mat &prev)
+VisualOdometry::runInference(const cv::Mat &curr, const cv::Mat &prev)
 {
   // Preprocess the image
   cv::Mat preprocess_curr, preprocess_prev;
@@ -222,13 +248,13 @@ VisualOdometry::convertToTensor(const cv::Mat &curr, const cv::Mat &prev)
 void VisualOdometry::allocateBuffers()
 {
   // Allocate HOST data
-  cudaMallocHost(reinterpret_cast<void **>(input_host_),
+  cudaMallocHost(reinterpret_cast<void **>(&input_host_),
                  2 * resize_h_ * resize_w_ * sizeof(float));
-  cudaMallocHost(reinterpret_cast<void **>(output_kp_),
+  cudaMallocHost(reinterpret_cast<void **>(&output_kp_),
                  2 * max_matches_ * 2 * sizeof(int));
-  cudaMallocHost(reinterpret_cast<void **>(output_matches_),
+  cudaMallocHost(reinterpret_cast<void **>(&output_matches_),
                  max_matches_ * 3 * sizeof(int));
-  cudaMallocHost(reinterpret_cast<void **>(match_scores_), max_matches_ * sizeof(float));
+  cudaMallocHost(reinterpret_cast<void **>(&match_scores_), max_matches_ * sizeof(float));
 
   // Allocate data for inference output
   cudaMalloc(&bindings[0], 2 * resize_h_ * resize_w_ * sizeof(float));

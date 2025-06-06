@@ -20,11 +20,6 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   cy_ = declare_parameter("cy", 0.0);
   pose_initializer_ = declare_parameter<std::string>("pose_initializer", "");
 
-  // Set VisualOdometry Class
-  visual_odometry_ = std::make_unique<VisualOdometry>(resize_w_, resize_h_,
-                                                      num_keypoints_, score_thresh_);
-  visual_odometry_->setIntrinsicMat(fx_, fy_, cx_, cy_);
-
   if(img_topic_.empty() || weight_file_.empty())
   {
     RCLCPP_ERROR(get_logger(), "Image topic or weight file is not specified");
@@ -63,8 +58,12 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   timer_ = this->create_wall_timer(std::chrono::milliseconds(50),
                                    std::bind(&FusionVO::timerCallback, this));
 
-  // Initialize TensorRT
-  initializeEngine(weight_file_);
+  // Set VisualOdometry Class
+  std::string share_dir = ament_index_cpp::get_package_share_directory("fusion_vo");
+  std::string weight_path = share_dir + weight_file_;
+  visual_odometry_ = std::make_unique<VisualOdometry>(
+    resize_w_, resize_h_, num_keypoints_, score_thresh_, weight_path);
+  visual_odometry_->setIntrinsicMat(fx_, fy_, cx_, cy_);
 
   // Initialize tf2 for transforms
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
@@ -154,7 +153,7 @@ void FusionVO::timerCallback()
   // Assign curr frame
   curr_frame_ = init_image_;
 
-  if(!curr_frame_.empty() && !prev_frame_.empty() && !new_vo_)
+  if(!curr_frame_.empty() && !prev_frame_.empty() && new_vo_)
   {
     // Work on copy of buffer
     auto imu_buffer_copy = imu_buffer_;
@@ -164,7 +163,7 @@ void FusionVO::timerCallback()
     // Coviariance propagation occurs in this step (kalman predict)
     auto imu_delta = imu_measurement::imu_preintegration_RK4(ekf_state_, required_imu_,
                                                              P_mat_, Q_mat_);
-    auto vo_delta = visual_odometry_->runInference(context, curr_frame_, prev_frame_);
+    auto vo_delta = visual_odometry_->runInference(curr_frame_, prev_frame_);
 
     // Convert vo_delta to imu body frame
     geometry_msgs::msg::Pose transformed_vo_delta
@@ -184,30 +183,6 @@ void FusionVO::timerCallback()
   last_image_time_ = curr_time_;
   prev_frame_ = curr_frame_;
   new_vo_ = false;
-}
-
-void FusionVO::initializeEngine(const std::string &engine_path)
-{
-  // Load TensorRT engine from file
-  std::ifstream file(engine_path, std::ios::binary);
-  if(!file)
-  {
-    throw std::runtime_error("Failed to open engine file: " + engine_path);
-  }
-  file.seekg(0, std::ios::end);
-  size_t size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::vector<char> engine_data(size);
-  file.read(engine_data.data(), size);
-
-  // Create runtime and deserialize engine
-  // Create TensorRT Runtime
-  runtime.reset(nvinfer1::createInferRuntime(gLogger));
-
-  // Deserialize engine
-  engine.reset(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
-  context.reset(engine->createExecutionContext());
 }
 
 void FusionVO::setP(bool absolute_coords)

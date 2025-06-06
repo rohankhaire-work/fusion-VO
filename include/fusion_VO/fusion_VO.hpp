@@ -8,9 +8,8 @@
 
 #include <NvInfer.h>
 #include <cv_bridge/cv_bridge.h>
-#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <image_transport/image_transport.hpp>
-
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/image.h>
@@ -24,21 +23,7 @@
 
 #include <memory>
 #include <string>
-#include <fstream>
 #include <deque>
-
-// Custom TensorRT Logger
-class Logger : public nvinfer1::ILogger
-{
-public:
-  void log(Severity severity, const char *msg) noexcept override
-  {
-    if(severity == Severity::kINFO)
-      return; // Ignore INFO logs
-    std::cerr << "[TensorRT] " << msg << std::endl;
-  }
-};
-static Logger gLogger; // Global Logger
 
 class FusionVO : public rclcpp::Node
 {

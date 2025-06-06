@@ -2,7 +2,7 @@
   ros__parameters:
     image_topic: "carla/hero/front/image"
     imu_topic: "carla/hero/imu"
-    weight_file: "home/fusion-VO-ws/src/fusion-VO/weights/superpoint_lightglue_320_240.engine"
+    weight_file: "/weights/superpoint_lightglue_320_240.engine"
     imu_frame: "imu_link"
     camera_frame: "carla/front"
     base_frame: "base_link"
@@ -15,4 +15,4 @@
     cx: 320.0
     cy: 240.0
     absolute_coords: false
-    pose_initializer: "local"
+    pose_initializer: "rviz"
