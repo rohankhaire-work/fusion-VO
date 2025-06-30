@@ -109,7 +109,7 @@ private:
   void convertToWorldFrame(const EKFState &);
   void setGlobalPose();
   void setGlobalPose(const geometry_msgs::msg::PoseStamped &);
-  void setGlobalPose(const Eigen::Vector3d &);
+  void setGlobalPose(const Eigen::Vector3d &, const geometry_msgs::msg::Quaternion &);
   geometry_msgs::msg::Pose tf2TransformToPoseMsg(const tf2::Transform &);
   tf2::Transform poseMsgToTF2Transform(const geometry_msgs::msg::Pose &);
   void setP(bool);

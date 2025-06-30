@@ -134,15 +134,15 @@ void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &ms
   // Calcualte absoulte position in CARLA from GPS
   geographic_msgs::msg::GeoPoint gnss_ref;
   gnss_ref.longitude = ref_lon_;
-  gnss_ref.lattitude = ref_lat_;
+  gnss_ref.latitude = ref_lat_;
   gnss_ref.altitude = ref_alt_;
 
   // Calculate robot position wrt to ref gnss
   // ref gnss is the lat, lon, and alt of map frame
   gps_position_ = gps_measurement::compute_absolute_position(msg, gnss_ref);
 
-  if(!init_pose_available_)
-    setGlobalPose(gps_position_);
+  if(!init_pose_available_ && !imu_buffer_.empty())
+    setGlobalPose(gps_position_, imu_buffer_[0].orientation);
 
   init_pose_available_ = true;
 }
@@ -472,17 +472,18 @@ void FusionVO::setGlobalPose(const geometry_msgs::msg::PoseStamped &ref_pose)
   global_imu_vel_ = Eigen::Vector3d::Zero();
 }
 
-void FusionVO::setGlobalPose(const Eigen::Vector3d &pos_vec)
+void FusionVO::setGlobalPose(const Eigen::Vector3d &pos_vec,
+                             const geometry_msgs::msg::Quaternion &init_quat)
 {
   geometry_msgs::msg::Pose base_pose_map;
 
   base_pose_map.position.x = pos_vec.x();
   base_pose_map.position.y = pos_vec.y();
   base_pose_map.position.z = pos_vec.z();
-  base_pose_map.orientation.x = 0.0;
-  base_pose_map.orientation.y = 0.0;
-  base_pose_map.orientation.z = 0.0;
-  base_pose_map.orientation.w = 1.0;
+  base_pose_map.orientation.x = init_quat.x;
+  base_pose_map.orientation.y = init_quat.y;
+  base_pose_map.orientation.z = init_quat.z;
+  base_pose_map.orientation.w = init_quat.w;
 
   // Convert base pose in map frame to tf2::Transform
   tf2::Transform T_map_base;
