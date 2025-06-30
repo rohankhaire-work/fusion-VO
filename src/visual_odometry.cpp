@@ -1,4 +1,5 @@
 #include "fusion_VO/visual_odometry.hpp"
+#include <spdlog/spdlog.h>
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
                                double score_thresh, const std::string &weight_file)
@@ -60,7 +61,7 @@ cv::Mat
 VisualOdometry::preprocess_image(const cv::Mat &init_img, int resize_w, int resize_h)
 {
   cv::Mat gray;
-  cv::cvtColor(init_img, gray, cv::COLOR_BGRA2GRAY);
+  cv::cvtColor(init_img, gray, cv::COLOR_RGB2GRAY);
   cv::resize(gray, gray, cv::Size(resize_w, resize_h));
   gray.convertTo(gray, CV_32F, 1.0f / 255.0f);
 
@@ -130,37 +131,31 @@ VisualOdometry::runInference(const cv::Mat &curr, const cv::Mat &prev)
   // stream sync
   cudaStreamSynchronize(stream_);
 
+  SPDLOG_INFO("INFERENCE DONE");
   // Post process the output
   std::vector<int> final_matches;
   std::vector<float> final_scores;
-  postprocessModelOutput(context.get(), final_matches, final_scores);
-
+  postprocessModelOutput(final_matches, final_scores);
+  SPDLOG_INFO("Post Processing done");
   // Get the R and T
   std::pair<Eigen::Matrix3d, Eigen::Vector3d> pose = estimatePose(final_matches);
-
+  SPDLOG_INFO("POSE ESTIMATED");
   return pose;
 }
 
-void VisualOdometry::postprocessModelOutput(nvinfer1::IExecutionContext *context,
-                                            std::vector<int> &matches,
+void VisualOdometry::postprocessModelOutput(std::vector<int> &matches,
                                             std::vector<float> &scores)
 {
-  // Get the dynamic size of the output tensor (mscores)
-  nvinfer1::Dims64 matches_shape = context->getTensorShape("mscores");
+  // Use span t owrap specific data
+  // std::span<int> match_idx0(output_matches_ + max_matches_, max_matches_);
+  // std::span<int> match_idx1(output_matches_ + 2 * max_matches_, max_matches_);
+  std::span<int> flat_matches(output_matches_, max_matches_ * 3);
+  std::span<float> valid_scores(match_scores_, match_scores_ + max_matches_);
 
-  // Extract the valid number of matches
-  size_t num_matches = matches_shape.d[0];
-
-  // Copy only relevant data from host vector to std::vector
-  std::vector<int> valid_matches;
-  valid_matches.assign(output_matches_, output_matches_ + 3 * num_matches);
-  std::vector<float> valid_scores;
-  valid_scores.assign(match_scores_, match_scores_ + num_matches);
-
-  // Copy matches that pass the score score threshold
+  // Copy matches that pass the score threshold
   size_t valid_count = 0;
   // First pass: Count valid matches
-  for(size_t i = 0; i < num_matches; ++i)
+  for(size_t i = 0; i < max_matches_; ++i)
   {
     if(valid_scores[i] > score_threshold_)
     {
@@ -169,22 +164,27 @@ void VisualOdometry::postprocessModelOutput(nvinfer1::IExecutionContext *context
   }
 
   // Preallocate memory
-  matches.resize(valid_count * 3);
+  matches.resize(valid_count * 2);
   scores.resize(valid_count);
 
   size_t idx = 0;
   // Second pass: Copy only valid matches
-  for(size_t i = 0; i < num_matches; ++i)
+  for(size_t i = 0; i < max_matches_; ++i)
   {
     if(valid_scores[i] > score_threshold_)
     {
-      matches[idx * 3] = valid_matches[i * 3];
-      matches[idx * 3 + 1] = valid_matches[i * 3 + 1];
-      matches[idx * 3 + 2] = valid_matches[i * 3 + 2];
+      matches[idx * 2] = flat_matches[i * 3 + 1];
+      matches[idx * 2 + 1] = flat_matches[i * 3 + 2];
       scores[idx] = valid_scores[i];
+      // spdlog::info("Valid score is {} for match {} and {} for batch idx {}",
+      //              valid_scores[i], flat_matches[i * 3 + 1], flat_matches[i * 3 + 2],
+      //              flat_matches[i * 3 + 0]);
       idx++;
     }
   }
+
+  spdlog::info("Number of matches: {}", matches.size());
+  spdlog::info("NUmber of valid scors: {}", scores.size());
 }
 
 std::pair<Eigen::Matrix3d, Eigen::Vector3d>
@@ -193,17 +193,20 @@ VisualOdometry::estimatePose(const std::vector<int> &filtered_matches)
   std::vector<cv::Point2f> points_prev, points_curr;
   cv::Mat E, mask, R, t;
 
+  std::span<int> keypoints_flat(output_kp_, 2 * max_matches_ * 2);
   for(int idx = 0; idx < filtered_matches.size(); ++idx)
   {
-    int idx1 = filtered_matches[idx * 3];     // Index in previous frame keypoints
-    int idx2 = filtered_matches[idx * 3 + 1]; // Index in current frame keypoints
+    int idx1 = filtered_matches[idx * 2];     // Index in previous frame keypoints
+    int idx2 = filtered_matches[idx * 2 + 1]; // Index in current frame keypoints
 
     // Extract (x, y) coordinates from h_keypoints_
     float x1 = output_kp_[idx1 * 2];     // X-coordinate of previous frame
     float y1 = output_kp_[idx1 * 2 + 1]; // Y-coordinate of previous frame
 
-    float x2 = output_kp_[max_matches_ * 2 + idx2 * 2];
-    float y2 = output_kp_[max_matches_ * 2 + idx2 * 2 + 1];
+    float x2 = output_kp_[idx2 * 2 + max_matches_ * 2];
+    float y2 = output_kp_[idx2 * 2 + 1 + max_matches_ * 2];
+    spdlog::info("match indices -> idx0 = {}, idx1 = {}", idx1, idx2);
+    spdlog::info("pixel vals -> x1 = {}, y1 = {}, x2 = {}, y2 = {}", x1, y1, x2, y2);
     points_prev.emplace_back(x1, y1);
     points_curr.emplace_back(x2, y2);
   }

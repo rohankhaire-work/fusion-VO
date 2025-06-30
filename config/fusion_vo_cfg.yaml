@@ -3,9 +3,10 @@
     image_topic: "carla/hero/front/image"
     imu_topic: "carla/hero/imu"
     weight_file: "/weights/superpoint_lightglue_pipeline_240_320_1024.engine"
-    imu_frame: "imu_link"
+    imu_frame: "hero/imu"
     camera_frame: "carla/front"
-    base_frame: "base_link"
+    base_frame: "hero"
+    odom_frame: "base_link"
     map_frame: "map"
     resize_width: 320
     resize_height: 240

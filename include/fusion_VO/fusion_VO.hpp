@@ -60,7 +60,7 @@ private:
   std::string imu_topic_;
   std::string gps_topic_;
   std::string weight_file_;
-  std::string imu_frame_, camera_frame_, base_frame_, map_frame_;
+  std::string imu_frame_, camera_frame_, base_frame_, map_frame_, odom_frame_;
   int resize_w_, resize_h_, num_keypoints_;
   double score_thresh_;
   double fx_, fy_, cx_, cy_;

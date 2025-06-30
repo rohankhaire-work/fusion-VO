@@ -6,10 +6,12 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
+#include <spdlog/spdlog.h>
 
 #include <cstdint>
 #include <vector>
 #include <fstream>
+#include <span>
 
 // Custom TensorRT Logger
 class Logger : public nvinfer1::ILogger
@@ -59,8 +61,7 @@ private:
   std::vector<float> convertToTensor(const cv::Mat &, const cv::Mat &);
   void initializeEngine(const std::string &);
 
-  void postprocessModelOutput(nvinfer1::IExecutionContext *, std::vector<int> &,
-                              std::vector<float> &);
+  void postprocessModelOutput(std::vector<int> &, std::vector<float> &);
   std::pair<Eigen::Matrix3d, Eigen::Vector3d> estimatePose(const std::vector<int> &);
 };
 

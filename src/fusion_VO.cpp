@@ -9,11 +9,12 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   imu_frame_ = declare_parameter<std::string>("imu_frame", "");
   camera_frame_ = declare_parameter<std::string>("camera_frame", "");
   base_frame_ = declare_parameter<std::string>("base_frame", "");
+  odom_frame_ = declare_parameter<std::string>("odom_frame", "");
   map_frame_ = declare_parameter<std::string>("map_frame", "");
   resize_w_ = declare_parameter("resize_width", 416);
   resize_h_ = declare_parameter("resize_height", 416);
   num_keypoints_ = declare_parameter("num_keypoints", 1024);
-  score_thresh_ = declare_parameter("score_threshold", 0.5);
+  score_thresh_ = declare_parameter("score_threshold", 0.75);
   fx_ = declare_parameter("fx", 0.0);
   fy_ = declare_parameter("fy", 0.0);
   cx_ = declare_parameter("cx", 0.0);
@@ -123,9 +124,11 @@ void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &ms
 void FusionVO::RVIZCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr &msg)
 {
   if(!init_pose_available_)
+  {
     setGlobalPose(*msg);
-
-  init_pose_available_ = true;
+    init_pose_available_ = true;
+    RCLCPP_WARN(this->get_logger(), "Initial Pose Set via RVIZ");
+  }
 }
 
 void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
@@ -138,7 +141,7 @@ void FusionVO::IMUCallback(const sensor_msgs::msg::Imu::ConstSharedPtr &msg)
 
 void FusionVO::timerCallback()
 {
-  if(init_image_.empty() || required_imu_.empty() || !init_pose_available_)
+  if(init_image_.empty() || imu_buffer_.empty() || !init_pose_available_)
   {
     RCLCPP_WARN(this->get_logger(),
                 "Image or IMU or Initial pose data is not available in FusionVO");
@@ -514,7 +517,7 @@ void FusionVO::publishTFFrameAndOdometry(
   nav_msgs::msg::Odometry odom_msg;
   odom_msg.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
   odom_msg.header.frame_id = map_frame_;
-  odom_msg.child_frame_id = base_frame_;
+  odom_msg.child_frame_id = odom_frame_;
 
   odom_msg.pose.pose = pose_out;
 
