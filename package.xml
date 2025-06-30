@@ -14,6 +14,7 @@
   <depend>image_transport</depend>
   <depend>tf2_ros</depend>
   <depend>nav_msgs</depend>
+  <depend>geodesy</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

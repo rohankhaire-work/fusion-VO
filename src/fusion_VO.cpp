@@ -1,4 +1,6 @@
 #include "fusion_VO/fusion_VO.hpp"
+#include <optional>
+#include <rcl/time.h>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -20,6 +22,9 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   cx_ = declare_parameter("cx", 0.0);
   cy_ = declare_parameter("cy", 0.0);
   pose_initializer_ = declare_parameter<std::string>("pose_initializer", "");
+  ref_lat_ = declare_parameter("reference_lat", 0.0);
+  ref_lon_ = declare_parameter("reference_lon", 0.0);
+  ref_alt_ = declare_parameter("reference_alt", 0.0);
 
   if(img_topic_.empty() || weight_file_.empty())
   {
@@ -34,6 +39,17 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
       get_logger(),
       "Pose initializer is not set correctly. The options are gnss, rviz, or local");
     return;
+  }
+  // Make sure reference gnss co-ordiantes are present
+  // Convert them to UTM
+  if(pose_initializer_ == "gnss")
+  {
+    if(ref_lat_ == 0.0 || ref_lon_ == 0.0 || ref_alt_ == 0.0)
+    {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Reference GNSS co-ordinates are missing. Need them for robot positioning.");
+    }
   }
 
   // Subscription
@@ -70,6 +86,7 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+  tf_static_broadcaster_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(this);
 
   // set EKF state
   // and covariance matrices
@@ -79,8 +96,10 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   setR();
 
   // Set global pose
+  // Publish map frame
   if(pose_initializer_ == "local")
   {
+    broadcastLocalMapFrame(std::nullopt);
     setGlobalPose();
     init_pose_available_ = true;
   }
@@ -113,7 +132,14 @@ void FusionVO::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
 void FusionVO::GPSCallback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr &msg)
 {
   // Calcualte absoulte position in CARLA from GPS
-  gps_position_ = gps_measurement::compute_absolute_position(msg);
+  geographic_msgs::msg::GeoPoint gnss_ref;
+  gnss_ref.longitude = ref_lon_;
+  gnss_ref.lattitude = ref_lat_;
+  gnss_ref.altitude = ref_alt_;
+
+  // Calculate robot position wrt to ref gnss
+  // ref gnss is the lat, lon, and alt of map frame
+  gps_position_ = gps_measurement::compute_absolute_position(msg, gnss_ref);
 
   if(!init_pose_available_)
     setGlobalPose(gps_position_);
@@ -530,6 +556,37 @@ void FusionVO::publishTFFrameAndOdometry(
 
   // Publish base_link
   tf_broadcaster_->sendTransform(tf_msg);
+}
+
+void FusionVO::broadcastLocalMapFrame(
+  const std::optional<geometry_msgs::msg::Vector3> &local_map = std::nullopt)
+{
+  geometry_msgs::msg::TransformStamped t;
+  t.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
+  t.header.frame_id = map_frame_;
+  t.child_frame_id = map_frame_;
+
+  if(!local_map)
+  {
+    t.transform.translation.x = 0.0;
+    t.transform.translation.y = 0.0;
+    t.transform.translation.z = 0.0;
+  }
+  else
+  {
+    t.transform.translation.x = local_map->x;
+    t.transform.translation.y = local_map->y;
+    t.transform.translation.z = local_map->z;
+  }
+
+  tf2::Quaternion q;
+  q.setRPY(0, 0, 0);
+  t.transform.rotation.x = q.x();
+  t.transform.rotation.y = q.y();
+  t.transform.rotation.z = q.z();
+  t.transform.rotation.w = q.w();
+
+  tf_static_broadcaster_->sendTransform(t);
 }
 
 geometry_msgs::msg::Pose FusionVO::tf2TransformToPoseMsg(const tf2::Transform &tf)

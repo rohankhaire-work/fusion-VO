@@ -18,6 +18,7 @@
 #include <tf2/LinearMath/Transform.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -65,6 +66,7 @@ private:
   double score_thresh_;
   double fx_, fy_, cx_, cy_;
   std::string pose_initializer_;
+  double ref_lat_, ref_lon_, ref_alt_;
 
   // Variables
   cv::Mat prev_frame_;
@@ -83,6 +85,7 @@ private:
   Eigen::Matrix<double, 6, 6> R_mat_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::unique_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
   EKFState ekf_state_;
   geometry_msgs::msg::PoseStamped global_imu_pose_;
   Eigen::Vector3d global_imu_vel_;
@@ -100,6 +103,9 @@ private:
   void
   publishTFFrameAndOdometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &,
                             const geometry_msgs::msg::PoseStamped &);
+  void
+  broadcastLocalMapFrame(const std::optional<geometry_msgs::msg::Vector3> &local_map);
+
   void convertToWorldFrame(const EKFState &);
   void setGlobalPose();
   void setGlobalPose(const geometry_msgs::msg::PoseStamped &);
