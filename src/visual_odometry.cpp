@@ -1,5 +1,4 @@
 #include "fusion_VO/visual_odometry.hpp"
-#include <spdlog/spdlog.h>
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
                                double score_thresh, const std::string &weight_file)
@@ -92,7 +91,7 @@ void VisualOdometry::initializeEngine(const std::string &engine_path)
   context.reset(engine->createExecutionContext());
 }
 
-std::pair<Eigen::Matrix3d, Eigen::Vector3d>
+std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool>
 VisualOdometry::runInference(const cv::Mat &curr, const cv::Mat &prev)
 {
   // Preprocess the image
@@ -131,15 +130,14 @@ VisualOdometry::runInference(const cv::Mat &curr, const cv::Mat &prev)
   // stream sync
   cudaStreamSynchronize(stream_);
 
-  SPDLOG_INFO("INFERENCE DONE");
   // Post process the output
   std::vector<int> final_matches;
   std::vector<float> final_scores;
   postprocessModelOutput(final_matches, final_scores);
-  SPDLOG_INFO("Post Processing done");
+
   // Get the R and T
-  std::pair<Eigen::Matrix3d, Eigen::Vector3d> pose = estimatePose(final_matches);
-  SPDLOG_INFO("POSE ESTIMATED");
+  std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool> pose = estimatePose(final_matches);
+
   return pose;
 }
 
@@ -147,8 +145,6 @@ void VisualOdometry::postprocessModelOutput(std::vector<int> &matches,
                                             std::vector<float> &scores)
 {
   // Use span t owrap specific data
-  // std::span<int> match_idx0(output_matches_ + max_matches_, max_matches_);
-  // std::span<int> match_idx1(output_matches_ + 2 * max_matches_, max_matches_);
   std::span<int> flat_matches(output_matches_, max_matches_ * 3);
   std::span<float> valid_scores(match_scores_, match_scores_ + max_matches_);
 
@@ -183,21 +179,20 @@ void VisualOdometry::postprocessModelOutput(std::vector<int> &matches,
     }
   }
 
-  spdlog::info("Number of matches: {}", matches.size());
-  spdlog::info("NUmber of valid scors: {}", scores.size());
+  spdlog::info("Number of matches: {}", matches.size() / 2);
 }
 
-std::pair<Eigen::Matrix3d, Eigen::Vector3d>
+std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool>
 VisualOdometry::estimatePose(const std::vector<int> &filtered_matches)
 {
   std::vector<cv::Point2f> points_prev, points_curr;
   cv::Mat E, mask, R, t;
 
   std::span<int> keypoints_flat(output_kp_, 2 * max_matches_ * 2);
-  for(int idx = 0; idx < filtered_matches.size(); ++idx)
+  for(int idx = 0; idx < filtered_matches.size(); idx += 2)
   {
-    int idx1 = filtered_matches[idx * 2];     // Index in previous frame keypoints
-    int idx2 = filtered_matches[idx * 2 + 1]; // Index in current frame keypoints
+    int idx1 = filtered_matches[idx];     // Index in previous frame keypoints
+    int idx2 = filtered_matches[idx + 1]; // Index in current frame keypoints
 
     // Extract (x, y) coordinates from h_keypoints_
     float x1 = output_kp_[idx1 * 2];     // X-coordinate of previous frame
@@ -205,12 +200,17 @@ VisualOdometry::estimatePose(const std::vector<int> &filtered_matches)
 
     float x2 = output_kp_[idx2 * 2 + max_matches_ * 2];
     float y2 = output_kp_[idx2 * 2 + 1 + max_matches_ * 2];
-    spdlog::info("match indices -> idx0 = {}, idx1 = {}", idx1, idx2);
-    spdlog::info("pixel vals -> x1 = {}, y1 = {}, x2 = {}, y2 = {}", x1, y1, x2, y2);
+    // spdlog::info("match indices -> idx0 = {}, idx1 = {}", idx1, idx2);
+    // spdlog::info("pixel vals -> x1 = {}, y1 = {}, x2 = {}, y2 = {}", x1, y1, x2, y2);
     points_prev.emplace_back(x1, y1);
     points_curr.emplace_back(x2, y2);
   }
-
+  if(filtered_matches.size() / 2 < 10)
+  {
+    SPDLOG_WARN("Too few matches ({}). Skipping essential matrix estimation.",
+                filtered_matches.size() / 2);
+    return {Eigen::Matrix3d::Identity(), Eigen::Vector3d::Identity(), false};
+  }
   // Compute the Essential Matrix
   E = cv::findEssentialMat(points_prev, points_curr, K_, cv::RANSAC, 0.999, 1.0, mask);
 
@@ -224,7 +224,7 @@ VisualOdometry::estimatePose(const std::vector<int> &filtered_matches)
   cv::cv2eigen(R, R_eigen);
   cv::cv2eigen(t, t_eigen);
 
-  return {R_eigen, t_eigen};
+  return {R_eigen, t_eigen, true};
 }
 
 std::vector<float>

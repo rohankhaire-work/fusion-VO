@@ -12,6 +12,7 @@
 #include <vector>
 #include <fstream>
 #include <span>
+#include <tuple>
 
 // Custom TensorRT Logger
 class Logger : public nvinfer1::ILogger
@@ -31,7 +32,7 @@ public:
   VisualOdometry(int, int, int, double, const std::string &);
   ~VisualOdometry();
   void setIntrinsicMat(double, double, double, double);
-  std::pair<Eigen::Matrix3d, Eigen::Vector3d>
+  std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool>
   runInference(const cv::Mat &, const cv::Mat &);
   cv::Mat K_;
 
@@ -62,7 +63,8 @@ private:
   void initializeEngine(const std::string &);
 
   void postprocessModelOutput(std::vector<int> &, std::vector<float> &);
-  std::pair<Eigen::Matrix3d, Eigen::Vector3d> estimatePose(const std::vector<int> &);
+  std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool>
+  estimatePose(const std::vector<int> &);
 };
 
 #endif // VISUAL_ODOMETRY__VISUAL_ODOMETRY_HPP_

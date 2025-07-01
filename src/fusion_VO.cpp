@@ -1,6 +1,7 @@
 #include "fusion_VO/fusion_VO.hpp"
 #include <optional>
 #include <rcl/time.h>
+#include <rclcpp/logging.hpp>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -179,30 +180,37 @@ void FusionVO::timerCallback()
 
   if(!curr_frame_.empty() && !prev_frame_.empty() && new_vo_)
   {
-    RCLCPP_WARN(this->get_logger(), "LOOP HAS STARTED");
-
     // Trim the buffer every new VO update
     imu_measurement::trim_imu_buffer(imu_buffer_, last_image_time_);
 
     // Collect imu readings between image frames
     required_imu_
-      = imu_measurement::collect_imu_readings(imu_buffer_, last_image_time_, curr_time_);
+      = imu_measurement::collect_imu_readings(imu_buffer_, curr_time_, last_image_time_);
 
     // Get IMU Preintegration using RK4
     // Coviariance propagation occurs in this step (kalman predict)
-    RCLCPP_WARN(this->get_logger(), "Perfroming PRE-INTEGRATION");
     auto imu_delta = imu_measurement::imu_preintegration_RK4(ekf_state_, required_imu_,
                                                              P_mat_, Q_mat_);
-    RCLCPP_WARN(this->get_logger(), "Performing INFERENCE");
-    auto vo_delta = visual_odometry_->runInference(curr_frame_, prev_frame_);
 
-    // Convert vo_delta to imu body frame
-    geometry_msgs::msg::Pose transformed_vo_delta
-      = transformPoseMsg(vo_delta.first, vo_delta.second, imu_frame_, camera_frame_);
+    auto [vo_R, vo_T, vo_flag] = visual_odometry_->runInference(curr_frame_, prev_frame_);
 
-    // Kalman update
-    ekf_state_
-      = kalman_filter::update_vo(imu_delta, transformed_vo_delta, R_mat_, P_mat_);
+    // Check whether to use VO
+    if(vo_flag)
+    {
+      // Convert vo_delta to imu body frame
+      geometry_msgs::msg::Pose transformed_vo_delta
+        = transformPoseMsg(vo_R, vo_T, imu_frame_, camera_frame_);
+
+      // Kalman update
+      ekf_state_
+        = kalman_filter::update_vo(imu_delta, transformed_vo_delta, R_mat_, P_mat_);
+    }
+    else
+    {
+      ekf_state_.delta_p_ = imu_delta.delta_p_;
+      ekf_state_.delta_v_ = imu_delta.delta_v_;
+      ekf_state_.delta_q_ = imu_delta.delta_q_;
+    }
 
     // Convert to World Frame
     convertToWorldFrame(ekf_state_);
@@ -534,7 +542,7 @@ void FusionVO::publishTFFrameAndOdometry(
   geometry_msgs::msg::TransformStamped tf_msg;
   tf_msg.header.stamp = rclcpp::Clock(RCL_ROS_TIME).now();
   tf_msg.header.frame_id = map_frame_;
-  tf_msg.child_frame_id = base_frame_;
+  tf_msg.child_frame_id = odom_frame_;
   tf_msg.transform = tf2::toMsg(pose_in_base);
 
   // convert geometry_msgs Pose

@@ -218,6 +218,10 @@ namespace imu_measurement
       propagateCovariance(imu_preint, P_mat, Q_mat, F);
     }
 
+    // spdlog::info("No. of imu msgs: {}", imu_msgs.size());
+    // spdlog::info("imu preint values -> delta_p: {}, {}, {}", imu_preint.delta_p_.x(),
+    //              imu_preint.delta_p_.y(), imu_preint.delta_p_.z());
+
     return imu_preint;
   }
 
