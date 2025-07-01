@@ -73,17 +73,6 @@ namespace kalman_filter
     new_imu_state.bias_gyro_ = imu_preint.bias_gyro_ + dx.segment<3>(12);
     new_imu_state.scale_ = imu_preint.scale_ + dx(15);
 
-    /*
-    if(robustScale(imu_preint.scale_, new_imu_state.scale_))
-    {
-      spdlog::info("scale converged");
-      new_imu_state.delta_p_ = imu_preint.delta_p_ + dx.segment<3>(0);
-    }
-    else
-    {
-      new_imu_state.delta_p_ = imu_preint.delta_p_;
-    }
-*/
     new_imu_state.delta_p_ = imu_preint.delta_p_;
     // --- 8. Covariance update ---
     Eigen::Matrix<double, 16, 16> I = Eigen::Matrix<double, 16, 16>::Identity();

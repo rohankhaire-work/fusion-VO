@@ -1,7 +1,8 @@
+#ifdef ENABLE_LOGGING
+#include "fusion_VO/logging.hpp"
+#endif
+
 #include "fusion_VO/fusion_VO.hpp"
-#include <optional>
-#include <rcl/time.h>
-#include <rclcpp/logging.hpp>
 
 FusionVO::FusionVO() : Node("fusion_vo_node")
 {
@@ -26,6 +27,8 @@ FusionVO::FusionVO() : Node("fusion_vo_node")
   ref_lat_ = declare_parameter("reference_lat", 0.0);
   ref_lon_ = declare_parameter("reference_lon", 0.0);
   ref_alt_ = declare_parameter("reference_alt", 0.0);
+
+#define logging
 
   if(img_topic_.empty() || weight_file_.empty())
   {
@@ -180,9 +183,6 @@ void FusionVO::timerCallback()
 
   if(!curr_frame_.empty() && !prev_frame_.empty() && new_vo_)
   {
-    // Trim the buffer every new VO update
-    imu_measurement::trim_imu_buffer(imu_buffer_, last_image_time_);
-
     // Collect imu readings between image frames
     required_imu_
       = imu_measurement::collect_imu_readings(imu_buffer_, curr_time_, last_image_time_);
@@ -191,6 +191,17 @@ void FusionVO::timerCallback()
     // Coviariance propagation occurs in this step (kalman predict)
     auto imu_delta = imu_measurement::imu_preintegration_RK4(ekf_state_, required_imu_,
                                                              P_mat_, Q_mat_);
+
+#ifdef ENABLE_LOGGING
+    LOG_INFO("Pre-integration values -> delta_p: {}, {}, {}", imu_delta.delta_p_.x(),
+             imu_delta.delta_p_.y(), imu_delta.delta_p_.z());
+    LOG_INFO("Pre-integration values -> delta_v: {}, {}, {}", imu_delta.delta_v_.x(),
+             imu_delta.delta_v_.y(), imu_delta.delta_v_.z());
+    LOG_INFO("accel biases are: {}, {}, {}", ekf_state_.bias_accel_.x(),
+             ekf_state_.bias_accel_.y(), ekf_state_.bias_accel_.z());
+    LOG_INFO("gyro biases are: {}, {}, {}", ekf_state_.bias_gyro_.x(),
+             ekf_state_.bias_gyro_.y(), ekf_state_.bias_gyro_.z());
+#endif
 
     auto [vo_R, vo_T, vo_flag] = visual_odometry_->runInference(curr_frame_, prev_frame_);
 
@@ -213,7 +224,7 @@ void FusionVO::timerCallback()
     }
 
     // Convert to World Frame
-    convertToWorldFrame(ekf_state_);
+    convertToWorldFrame(ekf_state_, imu_delta.dt_);
 
     // Publish TF Frame and odometry msg
     publishTFFrameAndOdometry(odom_pub_, global_imu_pose_);
@@ -369,7 +380,7 @@ FusionVO::transformPoseMsg(const Eigen::Matrix3d &rot, const Eigen::Vector3d &po
   return base_pose;
 }
 
-void FusionVO::convertToWorldFrame(const EKFState &ekf_state)
+void FusionVO::convertToWorldFrame(const EKFState &ekf_state, double dt)
 {
   Eigen::Quaterniond rot_global;
   // Convert to Eigen
@@ -382,6 +393,11 @@ void FusionVO::convertToWorldFrame(const EKFState &ekf_state)
   Eigen::Vector3d delta_p_map = q_map * ekf_state.delta_p_;
   Eigen::Vector3d delta_v_map = q_map * ekf_state.delta_v_;
   Eigen::Quaterniond delta_q_map = q_map * ekf_state.delta_q_ * q_map.inverse();
+
+  // Compensate for gravity
+  Eigen::Vector3d gravity_world(0, 0, -9.81);
+  delta_v_map += gravity_world * dt;
+  delta_p_map += 0.5 * gravity_world * dt * dt;
 
   // Update imu link in map/world frame
   rot_global = (delta_q_map * q_map).normalized();

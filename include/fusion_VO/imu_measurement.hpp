@@ -8,7 +8,6 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <vector>
 #include <deque>
-#include <spdlog/spdlog.h>
 
 namespace imu_measurement
 {

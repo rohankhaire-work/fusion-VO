@@ -1,3 +1,7 @@
+#ifdef ENABLE_LOGGING
+#include "fusion_VO/logging.hpp"
+#endif
+
 #include "fusion_VO/imu_measurement.hpp"
 #include "fusion_VO/data_struct.hpp"
 
@@ -8,6 +12,7 @@ namespace imu_measurement
                        const rclcpp::Time &curr_time, const rclcpp::Time &last_time)
   {
     std::vector<sensor_msgs::msg::Imu> selected_imu_data;
+    bool prev_imu_added = false;
     auto it = imu_buffer.begin();
     while(it != imu_buffer.end())
     {
@@ -15,6 +20,12 @@ namespace imu_measurement
 
       if(imu_time >= last_time && imu_time <= curr_time)
       {
+        if(it != imu_buffer.begin() && !prev_imu_added)
+        {
+          auto prev = std::prev(it);
+          selected_imu_data.push_back(*prev);
+          prev_imu_added = true;
+        }
         selected_imu_data.push_back(*it);
       }
       ++it;
@@ -71,7 +82,7 @@ namespace imu_measurement
                                 .normalized();
     Eigen::Vector3d v2 = preint.delta_v_ + 0.5 * dt * k1_v;
     Eigen::Quaterniond k2_q = quaternion_derivative(q2, gyro_unbias);
-    Eigen::Vector3d k2_v = q2 * preint.bias_accel_;
+    Eigen::Vector3d k2_v = q2 * acc_unbias;
     Eigen::Vector3d k2_p = v2;
 
     // Step 3 (k3)
@@ -81,7 +92,7 @@ namespace imu_measurement
                                 .normalized();
     Eigen::Vector3d v3 = preint.delta_v_ + 0.5 * dt * k2_v;
     Eigen::Quaterniond k3_q = quaternion_derivative(q3, gyro_unbias);
-    Eigen::Vector3d k3_v = q3 * preint.bias_accel_;
+    Eigen::Vector3d k3_v = q3 * acc_unbias;
     Eigen::Vector3d k3_p = v3;
 
     // Step 4 (k4)
@@ -90,7 +101,7 @@ namespace imu_measurement
         * Eigen::Quaterniond(1, k3_q.x() * dt, k3_q.y() * dt, k3_q.z() * dt).normalized();
     Eigen::Vector3d v4 = preint.delta_v_ + dt * k3_v;
     Eigen::Quaterniond k4_q = quaternion_derivative(q4, gyro_unbias);
-    Eigen::Vector3d k4_v = q4 * preint.bias_accel_;
+    Eigen::Vector3d k4_v = q4 * acc_unbias;
     Eigen::Vector3d k4_p = v4;
 
     // Compute final integrated values
@@ -185,6 +196,7 @@ namespace imu_measurement
   {
     // Initial state
     IMUPreintegrationState imu_preint;
+    double total_dt = 0.0;
     imu_preint.bias_accel_ = meas_state.bias_accel_;
     imu_preint.bias_gyro_ = meas_state.bias_gyro_;
 
@@ -192,6 +204,10 @@ namespace imu_measurement
       return imu_preint;
 
     Eigen::Matrix<double, 16, 16> F = Eigen::Matrix<double, 16, 16>::Identity();
+
+#ifdef ENABLE_LOGGING
+    LOG_INFO("Number of IMU msgs: {}", imu_msgs.size());
+#endif
 
     for(size_t i = 1; i < imu_msgs.size(); ++i)
     {
@@ -208,20 +224,25 @@ namespace imu_measurement
       Eigen::Vector3d gyro(imu_msgs[i].angular_velocity.x, imu_msgs[i].angular_velocity.y,
                            imu_msgs[i].angular_velocity.z);
 
+#ifdef ENABLE_LOGGING
+      LOG_INFO("IMU accleration values are: {}, {}, {}", accel[0], accel[1], accel[2]);
+      LOG_INFO("IMU gyro values are: {}, {}, {}", gyro[0], gyro[1], gyro[2]);
+#endif
       // Perform RK4 integration
       imu_preint = rk4_imu_integration(imu_preint, accel, gyro, dt);
-
+      total_dt += imu_preint.dt_;
       // Compute F and G for the pre-integrated values
       computeStateTransitionJacobian(imu_preint, accel, gyro, F);
 
       // EKF step - propogate covariance
       propagateCovariance(imu_preint, P_mat, Q_mat, F);
     }
+    // Update dt
+    imu_preint.dt_ = total_dt;
 
-    // spdlog::info("No. of imu msgs: {}", imu_msgs.size());
-    // spdlog::info("imu preint values -> delta_p: {}, {}, {}", imu_preint.delta_p_.x(),
-    //              imu_preint.delta_p_.y(), imu_preint.delta_p_.z());
-
+#ifdef ENABLE_LOGGING
+    LOG_INFO("IMU msgs total dt: {}", total_dt);
+#endif
     return imu_preint;
   }
 

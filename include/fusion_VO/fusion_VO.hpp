@@ -106,7 +106,7 @@ private:
   void
   broadcastLocalMapFrame(const std::optional<geometry_msgs::msg::Vector3> &local_map);
 
-  void convertToWorldFrame(const EKFState &);
+  void convertToWorldFrame(const EKFState &, double);
   void setGlobalPose();
   void setGlobalPose(const geometry_msgs::msg::PoseStamped &);
   void setGlobalPose(const Eigen::Vector3d &, const geometry_msgs::msg::Quaternion &);

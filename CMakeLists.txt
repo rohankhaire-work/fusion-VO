@@ -6,6 +6,8 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -diag-suppress=20012")
 set(CMAKE_CUDA_ARCHITECTURES 86)
 set(CMAKE_CXX_STANDARD 20)
 
+option(ENABLE_LOGGING "Enable custom logging" ON)
+
 find_package(TensorRT REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -23,6 +25,11 @@ add_executable(fusion_vo src/fusion_VO.cpp
                          src/imu_measurement.cpp 
                          src/kalman_filter.cpp
                          src/gps_measurement.cpp)
+
+if(ENABLE_LOGGING)
+  target_compile_definitions(fusion_vo PRIVATE ENABLE_LOGGING)
+endif()
+
 target_include_directories(fusion_vo PRIVATE include
                                              ${OpenCV_INCLUDE_DIRS}
                                              ${CUDAToolkit_INCLUDE_DIR} 

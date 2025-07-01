@@ -1,3 +1,7 @@
+#ifdef ENABLE_LOGGING
+#include "fusion_VO/logging.hpp"
+#endif
+
 #include "fusion_VO/visual_odometry.hpp"
 
 VisualOdometry::VisualOdometry(int resize_w, int resize_h, int num_keypoints,
@@ -179,7 +183,9 @@ void VisualOdometry::postprocessModelOutput(std::vector<int> &matches,
     }
   }
 
-  spdlog::info("Number of matches: {}", matches.size() / 2);
+#ifdef ENABLE_LOGGING
+  LOG_INFO("Number of matches: {}", matches.size() / 2);
+#endif
 }
 
 std::tuple<Eigen::Matrix3d, Eigen::Vector3d, bool>
@@ -207,8 +213,10 @@ VisualOdometry::estimatePose(const std::vector<int> &filtered_matches)
   }
   if(filtered_matches.size() / 2 < 10)
   {
-    SPDLOG_WARN("Too few matches ({}). Skipping essential matrix estimation.",
-                filtered_matches.size() / 2);
+#ifdef ENABLE_LOGGING
+    LOG_WARN("Too few matches ({}). Skipping essential matrix estimation.",
+             filtered_matches.size() / 2);
+#endif
     return {Eigen::Matrix3d::Identity(), Eigen::Vector3d::Identity(), false};
   }
   // Compute the Essential Matrix

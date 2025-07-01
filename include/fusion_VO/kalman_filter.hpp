@@ -3,7 +3,6 @@
 
 #include "fusion_VO/data_struct.hpp"
 #include <geometry_msgs/msg/pose.hpp>
-#include <spdlog/spdlog.h>
 
 namespace kalman_filter
 {

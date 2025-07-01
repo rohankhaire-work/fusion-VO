@@ -6,7 +6,6 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
-#include <spdlog/spdlog.h>
 
 #include <cstdint>
 #include <vector>
