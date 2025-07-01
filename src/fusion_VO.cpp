@@ -187,16 +187,15 @@ void FusionVO::timerCallback()
     required_imu_
       = imu_measurement::collect_imu_readings(imu_buffer_, curr_time_, last_image_time_);
 
+    // Trim the buffer every new VO update
+    imu_measurement::trim_imu_buffer(imu_buffer_, last_image_time_);
+
     // Get IMU Preintegration using RK4
     // Coviariance propagation occurs in this step (kalman predict)
     auto imu_delta = imu_measurement::imu_preintegration_RK4(ekf_state_, required_imu_,
                                                              P_mat_, Q_mat_);
 
 #ifdef ENABLE_LOGGING
-    LOG_INFO("Pre-integration values -> delta_p: {}, {}, {}", imu_delta.delta_p_.x(),
-             imu_delta.delta_p_.y(), imu_delta.delta_p_.z());
-    LOG_INFO("Pre-integration values -> delta_v: {}, {}, {}", imu_delta.delta_v_.x(),
-             imu_delta.delta_v_.y(), imu_delta.delta_v_.z());
     LOG_INFO("accel biases are: {}, {}, {}", ekf_state_.bias_accel_.x(),
              ekf_state_.bias_accel_.y(), ekf_state_.bias_accel_.z());
     LOG_INFO("gyro biases are: {}, {}, {}", ekf_state_.bias_gyro_.x(),
@@ -262,12 +261,12 @@ void FusionVO::setP(bool absolute_coords)
   }
   else
   {
-    // Set position uncertainty
-    double sigma_p = 3.0; // meters
+    // Set position uncertainty (RVIZ)
+    double sigma_p = 0.01; // meters
     P_mat_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * (sigma_p * sigma_p);
 
     // Set velocity uncertainty
-    double sigma_v = 0.1; // m/s
+    double sigma_v = 0.01; // m/s
     P_mat_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * (sigma_v * sigma_v);
 
     // Set orientation uncertainty (IMU heading error ~5 degrees)
@@ -392,15 +391,25 @@ void FusionVO::convertToWorldFrame(const EKFState &ekf_state, double dt)
   // Get delta P and delta V and delta q in World
   Eigen::Vector3d delta_p_map = q_map * ekf_state.delta_p_;
   Eigen::Vector3d delta_v_map = q_map * ekf_state.delta_v_;
-  Eigen::Quaterniond delta_q_map = q_map * ekf_state.delta_q_ * q_map.inverse();
+  Eigen::Quaterniond delta_q_map = (q_map * ekf_state.delta_q_).normalized();
 
   // Compensate for gravity
   Eigen::Vector3d gravity_world(0, 0, -9.81);
   delta_v_map += gravity_world * dt;
   delta_p_map += 0.5 * gravity_world * dt * dt;
 
+#ifdef ENABLE_LOGGING
+  LOG_INFO("Pre-integration values -> delta_p: {}, {}, {}", delta_p_map.x(),
+           delta_p_map.y(), delta_p_map.z());
+  LOG_INFO("Pre-integration values -> delta_v: {}, {}, {}", delta_v_map.x(),
+           delta_v_map.y(), delta_v_map.z());
+  LOG_INFO("GLobal IMU position BEFORE imu delta is -> {}, {}, {}",
+           global_imu_pose_.pose.position.x, global_imu_pose_.pose.position.y,
+           global_imu_pose_.pose.position.z);
+#endif
+
   // Update imu link in map/world frame
-  rot_global = (delta_q_map * q_map).normalized();
+  rot_global = (q_map * ekf_state.delta_q_).normalized();
   global_imu_pose_.pose.position.x += delta_p_map.x();
   global_imu_pose_.pose.position.y += delta_p_map.y();
   global_imu_pose_.pose.position.z += delta_p_map.z();
@@ -409,6 +418,12 @@ void FusionVO::convertToWorldFrame(const EKFState &ekf_state, double dt)
   global_imu_pose_.pose.orientation.y = rot_global.y();
   global_imu_pose_.pose.orientation.z = rot_global.z();
   global_imu_pose_.pose.orientation.w = rot_global.w();
+
+#ifdef ENABLE_LOGGING
+  LOG_INFO("GLobal IMU position AFTER imu delta is -> {}, {}, {}",
+           global_imu_pose_.pose.position.x, global_imu_pose_.pose.position.y,
+           global_imu_pose_.pose.position.z);
+#endif
 
   // Update velocity
   global_imu_vel_ += delta_v_map;

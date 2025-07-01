@@ -62,18 +62,19 @@ namespace kalman_filter
     Eigen::Matrix<double, 16, 1> dx = K * r;
 
     // Update velocity
-    new_imu_state.delta_v_ = imu_preint.delta_v_ + dx.segment<3>(3);
+    new_imu_state.delta_v_ = imu_preint.delta_v_;
 
     // Update quaternion with small-angle approximation
     Eigen::Vector3d dtheta = dx.segment<3>(6);
     Eigen::Quaterniond dq_upd(1, 0.5 * dtheta.x(), 0.5 * dtheta.y(), 0.5 * dtheta.z());
     new_imu_state.delta_q_ = (dq_upd * imu_preint.delta_q_).normalized();
 
-    new_imu_state.bias_accel_ = imu_preint.bias_accel_ + dx.segment<3>(9);
-    new_imu_state.bias_gyro_ = imu_preint.bias_gyro_ + dx.segment<3>(12);
+    new_imu_state.bias_accel_ = imu_preint.bias_accel_;
+    new_imu_state.bias_gyro_ = imu_preint.bias_gyro_;
     new_imu_state.scale_ = imu_preint.scale_ + dx(15);
 
     new_imu_state.delta_p_ = imu_preint.delta_p_;
+    new_imu_state.delta_q_ = imu_preint.delta_q_;
     // --- 8. Covariance update ---
     Eigen::Matrix<double, 16, 16> I = Eigen::Matrix<double, 16, 16>::Identity();
     P_mat = (I - K * H) * P_mat;
