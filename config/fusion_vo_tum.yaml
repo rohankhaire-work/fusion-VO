@@ -1,12 +1,12 @@
 /**:
   ros__parameters:
-    image_topic: "carla/hero/front/image"
-    imu_topic: "carla/hero/imu"
+    image_topic: "/cam0/image_raw"
+    imu_topic: "/imu0"
     weight_file: "/weights/superpoint_lightglue_pipeline_240_320_1024.engine"
-    imu_frame: "hero/imu"
-    camera_frame: "hero/front"
-    base_frame: "hero"
-    odom_frame: "base_link"
+    imu_frame: "imu"
+    camera_frame: "cam0"
+    base_frame: "base_link"
+    odom_frame: "odom"
     map_frame: "map"
     resize_width: 320
     resize_height: 240
